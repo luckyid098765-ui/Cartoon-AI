@@ -77,15 +77,48 @@ enum class VideoDurationOption(
 ) {
     SEC_10("SEC_10", "10 Seconds", "10s", 10, 2, 0),
     SEC_30("SEC_30", "30 Seconds", "30s", 30, 3, 0),
-    MIN_1("MIN_1", "60 Seconds", "60s", 60, 5, 0),
-    MIN_2("MIN_2", "120 Seconds", "120s", 120, 8, 0),
+    MIN_1("MIN_1", "1 Minute", "1m", 60, 4, 0),
+    MIN_2("MIN_2", "2 Minutes", "2m", 120, 6, 0),
     MIN_5("MIN_5", "5 Minutes", "5m", 300, 10, 0),
-    MIN_10("MIN_10", "10 Minutes", "10m", 600, 16, 0);
+    MIN_10("MIN_10", "10 Minutes", "10m", 600, 16, 0),
+    MIN_15("MIN_15", "15 Minutes", "15m", 900, 20, 0),
+    MIN_20("MIN_20", "20 Minutes", "20m", 1200, 24, 0),
+    MIN_30("MIN_30", "30 Minutes (Max)", "30m", 1800, 30, 0);
 
     companion object {
+        const val MIN_STORY_MINUTES = 1
+        const val MAX_STORY_MINUTES = 30
+        const val MAX_STORY_SECONDS = 1800
+
         fun fromKey(raw: String?): VideoDurationOption = when (raw) {
-            "EXTENDED" -> MIN_10
-            else -> entries.firstOrNull { it.key == raw } ?: SEC_30
+            "EXTENDED", "MIN_30" -> MIN_30
+            "MIN_25" -> MIN_20
+            else -> entries.firstOrNull { it.key == raw } ?: MIN_1
+        }
+
+        fun forMinutes(minutes: Int): VideoDurationOption {
+            val clamped = minutes.coerceIn(MIN_STORY_MINUTES, MAX_STORY_MINUTES)
+            return when {
+                clamped <= 1 -> MIN_1
+                clamped <= 2 -> MIN_2
+                clamped <= 5 -> MIN_5
+                clamped <= 10 -> MIN_10
+                clamped <= 15 -> MIN_15
+                clamped <= 20 -> MIN_20
+                else -> MIN_30
+            }
+        }
+
+        fun sceneCountForMinutes(minutes: Int): Int {
+            val clamped = minutes.coerceIn(MIN_STORY_MINUTES, MAX_STORY_MINUTES)
+            return when {
+                clamped == 1 -> 4
+                clamped == 2 -> 6
+                clamped <= 5 -> clamped * 2
+                clamped <= 10 -> 10 + (clamped - 5)
+                clamped <= 20 -> 15 + ((clamped - 10) / 2)
+                else -> (20 + (clamped - 20)).coerceAtMost(30)
+            }
         }
     }
 }
@@ -97,11 +130,55 @@ enum class CartoonLanguage(
 ) {
     ENGLISH("ENGLISH", "English", "en-US"),
     HINDI("HINDI", "Hindi (हिन्दी)", "hi-IN"),
-    BENGALI("BENGALI", "Bengali (বাংলা)", "bn-IN");
+    BENGALI("BENGALI", "Bengali (বাংলা)", "bn-IN"),
+    SPANISH("SPANISH", "Spanish (Español)", "es-ES"),
+    FRENCH("FRENCH", "French (Français)", "fr-FR"),
+    ARABIC("ARABIC", "Arabic (العربية)", "ar-SA"),
+    TAMIL("TAMIL", "Tamil (தமிழ்)", "ta-IN"),
+    JAPANESE("JAPANESE", "Japanese (日本語)", "ja-JP");
 
     companion object {
         fun fromKey(raw: String?): CartoonLanguage =
             entries.firstOrNull { it.key == raw } ?: ENGLISH
+    }
+}
+
+enum class StoryGenre(
+    val key: String,
+    val label: String,
+    val promptGuidance: String
+) {
+    AUTO("AUTO", "Auto Match", "Match the natural tone of the user's story prompt."),
+    FUNNY("FUNNY", "Funny", "Playful comedy, witty misunderstandings, slapstick visual gags, and cheerful timing."),
+    EMOTIONAL("EMOTIONAL", "Emotional", "Heartwarming emotional arc, deep friendship or family bonds, touching triumph."),
+    ADVENTURE("ADVENTURE", "Adventure", "Action-packed quest, brave discoveries, teamwork, and exciting obstacles."),
+    HORROR("HORROR", "Mystery / Spooky", "Kid-safe spooky haunted mystery, eerie shadows, suspenseful clues, and brave resolution."),
+    FANTASY("FANTASY", "Fantasy", "Magical realms, enchanted creatures, glowing spells, and wonder."),
+    EDUCATIONAL("EDUCATIONAL", "Educational", "Clear moral lesson, curiosity-driven facts (science, kindness, nature), engaging storytelling.");
+
+    companion object {
+        fun fromKey(raw: String?): StoryGenre =
+            entries.firstOrNull { it.key == raw } ?: AUTO
+    }
+}
+
+enum class BgmTrackOption(
+    val key: String,
+    val label: String,
+    val fixedMood: MoodMusic?
+) {
+    AUTO("AUTO", "AI Auto Soundtrack", null),
+    PLAYFUL("PLAYFUL", "Playful Toybox", MoodMusic.PLAYFUL),
+    ADVENTURE("ADVENTURE", "Heroic Adventure", MoodMusic.ADVENTURE),
+    EMOTIONAL("EMOTIONAL", "Heartfelt Piano", MoodMusic.EMOTIONAL),
+    MYSTERY("MYSTERY", "Spooky / Mystery", MoodMusic.SPOOKY),
+    COMEDY("COMEDY", "Bouncy Comedy", MoodMusic.COMEDY),
+    EPIC("EPIC", "Cinematic Epic", MoodMusic.EPIC),
+    UPBEAT_KIDS("UPBEAT_KIDS", "Upbeat Kids", MoodMusic.UPBEAT_KIDS);
+
+    companion object {
+        fun fromKey(raw: String?): BgmTrackOption =
+            entries.firstOrNull { it.key == raw } ?: AUTO
     }
 }
 
@@ -182,7 +259,10 @@ enum class MoodMusic(val key: String) {
     ADVENTURE("ADVENTURE"),
     MYSTERY("MYSTERY"),
     EPIC("EPIC"),
-    COMEDY("COMEDY");
+    COMEDY("COMEDY"),
+    EMOTIONAL("EMOTIONAL"),
+    SPOOKY("SPOOKY"),
+    UPBEAT_KIDS("UPBEAT_KIDS");
 
     companion object {
         fun fromKey(raw: String?): MoodMusic =

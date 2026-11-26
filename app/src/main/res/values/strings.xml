@@ -2,8 +2,8 @@
     <string name="app_name">Cartoon AI</string>
     <string name="brand_title">CARTOON AI</string>
     <string name="brand_subtitle">AI Cartoon Video Studio</string>
-    <string name="prompt_placeholder">Paste Your Cartoon Video Prompt Here...</string>
-    <string name="btn_generate_cartoon">GENERATE VIDEO</string>
+    <string name="prompt_placeholder">Paste Your Cartoon Story or Prompt Here...</string>
+    <string name="btn_generate_cartoon">Generate Cartoon</string>
     <string name="btn_clear_prompt">CLEAR</string>
     <string name="btn_paste_prompt">Paste</string>
     <string name="btn_copy_prompt">Copy</string>
@@ -13,6 +13,7 @@
     <string name="btn_download_mp4">DOWNLOAD VIDEO</string>
     <string name="btn_retry_download">Retry Download</string>
     <string name="btn_retry_generation">Retry Generation</string>
+    <string name="btn_resume_generation">Resume Generation</string>
     <string name="btn_save_to_projects">Save to My Projects</string>
     <string name="btn_saved_to_projects">Saved in My Projects</string>
     <string name="btn_regenerate_cartoon">REGENERATE</string>

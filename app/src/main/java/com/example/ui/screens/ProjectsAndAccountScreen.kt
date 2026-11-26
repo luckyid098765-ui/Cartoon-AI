@@ -42,6 +42,7 @@ import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.PlayCircle
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -111,6 +112,7 @@ fun ProjectsAndAccountScreen(
     characters: List<SavedCharacter>,
     history: List<GenerationHistoryEntry>,
     onOpenProject: (CartoonProject) -> Unit,
+    onResumeProject: (CartoonProject) -> Unit = {},
     onDeleteProject: (String) -> Unit,
     onDeleteHistoryEntry: (String) -> Unit,
     onClearHistory: () -> Unit,
@@ -436,6 +438,7 @@ fun ProjectsAndAccountScreen(
                                     ProjectGalleryCard(
                                         project = project,
                                         onClick = { onOpenProject(project) },
+                                        onResume = { onResumeProject(project) },
                                         onRequestDelete = { projectPendingDelete = project },
                                         modifier = Modifier.weight(1f)
                                     )
@@ -480,14 +483,29 @@ fun ProjectsAndAccountScreen(
                                         Text(
                                             text = "${project.completedScenes}/${project.sceneCount} scenes • ${formatDurationCompact(project.durationSeconds)} • ${project.status}",
                                             style = MaterialTheme.typography.labelSmall,
-                                            color = if (project.status == ProjectStatus.COMPLETED.key) SuccessMint else ElectricBlue
+                                            color = when (project.status) {
+                                                ProjectStatus.COMPLETED.key -> SuccessMint
+                                                ProjectStatus.FAILED.key -> ErrorCoral
+                                                else -> ElectricBlue
+                                            }
                                         )
                                     }
-                                    IconButton(
-                                        onClick = { onOpenProject(project) },
-                                        modifier = Modifier.minimumInteractiveComponentSize()
-                                    ) {
-                                        Icon(Icons.Filled.PlayCircle, contentDescription = "Open player", tint = ElectricViolet)
+                                    if (project.status == ProjectStatus.FAILED.key) {
+                                        IconButton(
+                                            onClick = { onResumeProject(project) },
+                                            modifier = Modifier
+                                                .minimumInteractiveComponentSize()
+                                                .testTag("resume_project_list_${project.id}")
+                                        ) {
+                                            Icon(Icons.Filled.Refresh, contentDescription = "Resume generation", tint = WarningAmber)
+                                        }
+                                    } else {
+                                        IconButton(
+                                            onClick = { onOpenProject(project) },
+                                            modifier = Modifier.minimumInteractiveComponentSize()
+                                        ) {
+                                            Icon(Icons.Filled.PlayCircle, contentDescription = "Open player", tint = ElectricViolet)
+                                        }
                                     }
                                     IconButton(
                                         onClick = { projectPendingDelete = project },
@@ -698,10 +716,12 @@ private fun ViewModeChip(
 private fun ProjectGalleryCard(
     project: CartoonProject,
     onClick: () -> Unit,
+    onResume: () -> Unit,
     onRequestDelete: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val isCompleted = project.status == ProjectStatus.COMPLETED.key
+    val isFailed = project.status == ProjectStatus.FAILED.key
     val style = CartoonStyle.fromKey(project.style)
     val shape = RoundedCornerShape(18.dp)
 
@@ -872,6 +892,23 @@ private fun ProjectGalleryCard(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
+                if (isFailed) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    OutlinedButton(
+                        onClick = onResume,
+                        border = BorderStroke(1.dp, WarningAmber),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = WarningAmber),
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(36.dp)
+                            .testTag("resume_project_gallery_${project.id}")
+                    ) {
+                        Icon(Icons.Filled.Refresh, contentDescription = null, modifier = Modifier.size(14.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Resume", style = MaterialTheme.typography.labelSmall)
+                    }
+                }
             }
         }
     }

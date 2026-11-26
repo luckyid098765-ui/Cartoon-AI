@@ -10,6 +10,7 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.example.ai.CartoonAiService
+import com.example.data.model.BgmTrackOption
 import com.example.data.model.CameraMotion
 import com.example.data.model.CartoonLanguage
 import com.example.data.model.CartoonProject
@@ -27,6 +28,7 @@ import com.example.data.model.SceneJobProgress
 import com.example.data.model.SceneRecord
 import com.example.data.model.SceneStatus
 import com.example.data.model.SfxCue
+import com.example.data.model.StoryGenre
 import com.example.data.model.UserProfile
 import com.example.data.model.VideoAspectRatio
 import com.example.data.model.VideoDurationOption
@@ -48,6 +50,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
@@ -70,20 +73,35 @@ sealed interface DataUiState<out T> {
 data class GeneratorFormState(
     val prompt: String = "",
     val style: CartoonStyle = CartoonStyle.CARTOON_3D,
-    val duration: VideoDurationOption = VideoDurationOption.SEC_30,
+    val durationMinutes: Int = 1,
+    val duration: VideoDurationOption = VideoDurationOption.MIN_1,
+    val storyGenre: StoryGenre = StoryGenre.AUTO,
+    val bgmTrack: BgmTrackOption = BgmTrackOption.AUTO,
     val language: CartoonLanguage = CartoonLanguage.ENGLISH,
     val aspectRatio: VideoAspectRatio = VideoAspectRatio.RATIO_16_9,
     val resolution: VideoResolution = VideoResolution.RES_1080P,
     val selectedCharacterIds: Set<String> = emptySet(),
     val isGeneratingStoryIdea: Boolean = false,
     val storyIdeaError: String? = null
-)
+) {
+    val targetTotalSeconds: Int
+        get() = (durationMinutes.coerceIn(
+            VideoDurationOption.MIN_STORY_MINUTES,
+            VideoDurationOption.MAX_STORY_MINUTES
+        ) * 60).coerceAtMost(VideoDurationOption.MAX_STORY_SECONDS)
+
+    val plannedSceneCount: Int
+        get() = VideoDurationOption.sceneCountForMinutes(durationMinutes)
+}
 
 private data class FailedGenerationRequest(
     val existingProjectId: String?,
     val prompt: String,
     val style: CartoonStyle,
+    val durationMinutes: Int,
     val durationOption: VideoDurationOption,
+    val storyGenre: StoryGenre,
+    val bgmTrack: BgmTrackOption,
     val language: CartoonLanguage,
     val aspectRatio: VideoAspectRatio,
     val resolution: VideoResolution,
@@ -241,8 +259,33 @@ class CartoonStudioViewModel(
         _formState.update { it.copy(style = style) }
     }
 
+    fun selectDurationMinutes(minutes: Int) {
+        val clamped = minutes.coerceIn(
+            VideoDurationOption.MIN_STORY_MINUTES,
+            VideoDurationOption.MAX_STORY_MINUTES
+        )
+        _formState.update {
+            it.copy(
+                durationMinutes = clamped,
+                duration = VideoDurationOption.forMinutes(clamped)
+            )
+        }
+    }
+
     fun selectDuration(duration: VideoDurationOption) {
-        _formState.update { it.copy(duration = duration) }
+        val mins = (duration.targetSeconds / 60).coerceIn(
+            VideoDurationOption.MIN_STORY_MINUTES,
+            VideoDurationOption.MAX_STORY_MINUTES
+        )
+        _formState.update { it.copy(duration = duration, durationMinutes = mins) }
+    }
+
+    fun selectGenre(genre: StoryGenre) {
+        _formState.update { it.copy(storyGenre = genre) }
+    }
+
+    fun selectBgmTrack(track: BgmTrackOption) {
+        _formState.update { it.copy(bgmTrack = track) }
     }
 
     fun selectLanguage(language: CartoonLanguage) {
@@ -277,7 +320,8 @@ class CartoonStudioViewModel(
                 val generated = aiService.generateStoryIdea(
                     seedPrompt = form.prompt,
                     style = form.style,
-                    language = form.language
+                    language = form.language,
+                    genre = form.storyGenre
                 )
                 _formState.update {
                     it.copy(
@@ -311,7 +355,7 @@ class CartoonStudioViewModel(
         }
     }
 
-    // Unlimited generation without daily/monthly quotas, credits, or arbitrary prompt-length limits
+    // Unlimited generation subject to available AI service capacity; max duration strictly capped at 30 minutes
     fun generateCartoonMovie(onOpenPlayer: (String) -> Unit = {}) {
         val form = _formState.value
         val trimmedPrompt = form.prompt.trim()
@@ -332,7 +376,10 @@ class CartoonStudioViewModel(
                 existingProjectId = null,
                 prompt = trimmedPrompt,
                 style = form.style,
+                durationMinutes = form.durationMinutes,
                 durationOption = form.duration,
+                storyGenre = form.storyGenre,
+                bgmTrack = form.bgmTrack,
                 language = form.language,
                 aspectRatio = form.aspectRatio,
                 resolution = form.resolution,
@@ -345,13 +392,25 @@ class CartoonStudioViewModel(
     fun retryFailedGeneration(onOpenPlayer: (String) -> Unit = {}) {
         if (_pipelineState.value.isRunning) return
         val last = lastFailedRequest
+        val targetId = last?.existingProjectId ?: _pipelineState.value.activeProjectId
+        if (!targetId.isNullOrBlank()) {
+            val allProjects = (projectsState.value as? DataUiState.Success)?.data.orEmpty()
+            val proj = allProjects.firstOrNull { it.id == targetId }
+            if (proj != null) {
+                resumeFailedProject(proj, onOpenPlayer)
+                return
+            }
+        }
         if (last != null) {
             activeGenerationJob = viewModelScope.launch {
                 runFullPipeline(
                     existingProjectId = last.existingProjectId,
                     prompt = last.prompt,
                     style = last.style,
+                    durationMinutes = last.durationMinutes,
                     durationOption = last.durationOption,
+                    storyGenre = last.storyGenre,
+                    bgmTrack = last.bgmTrack,
                     language = last.language,
                     aspectRatio = last.aspectRatio,
                     resolution = last.resolution,
@@ -362,6 +421,48 @@ class CartoonStudioViewModel(
             }
         } else {
             generateCartoonMovie(onOpenPlayer)
+        }
+    }
+
+    fun resumeFailedProject(
+        project: CartoonProject,
+        onOpenPlayer: (String) -> Unit = {}
+    ) {
+        if (_pipelineState.value.isRunning) {
+            _uiNotice.value = "A cartoon video is already generating."
+            return
+        }
+        val bgmOverride = _formState.value.bgmTrack
+        val genreOverride = _formState.value.storyGenre
+        activeGenerationJob = viewModelScope.launch {
+            val existingScenes = loadProjectScenesSnapshot(project.id)
+            if (existingScenes.isEmpty()) {
+                val mins = ((project.durationSeconds.toInt().coerceIn(60, VideoDurationOption.MAX_STORY_SECONDS)) / 60)
+                    .coerceIn(VideoDurationOption.MIN_STORY_MINUTES, VideoDurationOption.MAX_STORY_MINUTES)
+                val savedChars = (charactersState.value as? DataUiState.Success)?.data.orEmpty()
+                runFullPipeline(
+                    existingProjectId = project.id,
+                    prompt = project.prompt,
+                    style = CartoonStyle.fromKey(project.style),
+                    durationMinutes = mins,
+                    durationOption = VideoDurationOption.fromKey(project.durationOption),
+                    storyGenre = genreOverride,
+                    bgmTrack = bgmOverride,
+                    language = CartoonLanguage.fromKey(project.language),
+                    aspectRatio = VideoAspectRatio.fromKey(project.aspectRatio),
+                    resolution = VideoResolution.fromKey(project.resolution),
+                    lockedCharacters = savedChars.take(2),
+                    onOpenPlayer = onOpenPlayer,
+                    titleOverride = project.title
+                )
+            } else {
+                runResumeSavedScenesPipeline(
+                    project = project,
+                    savedScenes = existingScenes,
+                    bgmTrack = bgmOverride,
+                    onOpenPlayer = onOpenPlayer
+                )
+            }
         }
     }
 
@@ -376,6 +477,9 @@ class CartoonStudioViewModel(
             return
         }
         val savedChars = (charactersState.value as? DataUiState.Success)?.data.orEmpty()
+        val form = _formState.value
+        val mins = ((project.durationSeconds.toInt().coerceIn(60, VideoDurationOption.MAX_STORY_SECONDS)) / 60)
+            .coerceIn(VideoDurationOption.MIN_STORY_MINUTES, VideoDurationOption.MAX_STORY_MINUTES)
         activeGenerationJob = viewModelScope.launch {
             updateProject(
                 projectId = project.id,
@@ -389,7 +493,10 @@ class CartoonStudioViewModel(
                 existingProjectId = project.id,
                 prompt = newPrompt,
                 style = CartoonStyle.fromKey(project.style),
+                durationMinutes = mins,
                 durationOption = VideoDurationOption.fromKey(project.durationOption),
+                storyGenre = form.storyGenre,
+                bgmTrack = form.bgmTrack,
                 language = CartoonLanguage.fromKey(project.language),
                 aspectRatio = VideoAspectRatio.fromKey(project.aspectRatio),
                 resolution = VideoResolution.fromKey(project.resolution),
@@ -435,11 +542,24 @@ class CartoonStudioViewModel(
         }
     }
 
+    private suspend fun loadProjectScenesSnapshot(projectId: String): List<SceneRecord> =
+        runCatching {
+            val flow = if (repository != null && !currentUserId.isNullOrBlank()) {
+                repository.observeScenes(currentUserId, projectId)
+            } else {
+                localStore.observeScenes(projectId)
+            }
+            flow.first().sortedBy { it.sceneIndex }
+        }.getOrDefault(emptyList())
+
     private suspend fun runFullPipeline(
         existingProjectId: String?,
         prompt: String,
         style: CartoonStyle,
+        durationMinutes: Int,
         durationOption: VideoDurationOption,
+        storyGenre: StoryGenre,
+        bgmTrack: BgmTrackOption,
         language: CartoonLanguage,
         aspectRatio: VideoAspectRatio,
         resolution: VideoResolution,
@@ -448,11 +568,22 @@ class CartoonStudioViewModel(
         titleOverride: String? = null
     ) {
         var projectId = existingProjectId
+        val clampedMinutes = durationMinutes.coerceIn(
+            VideoDurationOption.MIN_STORY_MINUTES,
+            VideoDurationOption.MAX_STORY_MINUTES
+        )
+        val strictTargetSeconds = (clampedMinutes * 60).coerceIn(60, VideoDurationOption.MAX_STORY_SECONDS)
+        val targetScenesCount = VideoDurationOption.sceneCountForMinutes(clampedMinutes)
+        val durationLabelText = "${clampedMinutes}m"
+
         lastFailedRequest = FailedGenerationRequest(
             existingProjectId = existingProjectId,
             prompt = prompt,
             style = style,
+            durationMinutes = clampedMinutes,
             durationOption = durationOption,
+            storyGenre = storyGenre,
+            bgmTrack = bgmTrack,
             language = language,
             aspectRatio = aspectRatio,
             resolution = resolution,
@@ -467,20 +598,23 @@ class CartoonStudioViewModel(
                 activeTitle = titleOverride ?: "Preparing Cartoon...",
                 phase = PipelinePhase.WRITING_SCRIPT,
                 progressPercent = 5,
-                statusDetail = "Converting story into ${durationOption.sceneCount}-scene ${language.label} script..."
+                statusDetail = "Converting story into ${targetScenesCount}-scene ${clampedMinutes}-min ${language.label} script..."
             )
 
-            // 1. Generate complete script & scene breakdown via Gemini AI
+            // 1. Generate complete script & scene breakdown via Gemini AI (multi-chapter batched if > 10 scenes)
             val script = aiService.generateFullScript(
                 prompt = prompt,
                 style = style,
-                durationOption = durationOption,
+                targetSeconds = strictTargetSeconds,
+                sceneCount = targetScenesCount,
                 language = language,
-                lockedCharacters = lockedCharacters
+                lockedCharacters = lockedCharacters,
+                genre = storyGenre,
+                bgmOption = bgmTrack
             )
             val movieTitle = titleOverride?.takeIf { it.isNotBlank() } ?: script.title
 
-            // 2. Create or update Project & Scenes
+            // 2. Create or update Project & auto-save Scenes immediately
             if (projectId == null) {
                 val created = createProjectRecord(
                     CartoonProject(
@@ -495,7 +629,7 @@ class CartoonStudioViewModel(
                         progressPercent = 12,
                         sceneCount = script.scenes.size.toLong(),
                         completedScenes = 0,
-                        durationSeconds = durationOption.targetSeconds.toLong(),
+                        durationSeconds = strictTargetSeconds.toLong(),
                         scriptSummary = script.logline
                     )
                 )
@@ -510,6 +644,7 @@ class CartoonStudioViewModel(
                     progressPercent = 12,
                     sceneCount = script.scenes.size,
                     completedScenes = 0,
+                    durationSeconds = strictTargetSeconds,
                     scriptSummary = script.logline
                 )
             }
@@ -524,7 +659,7 @@ class CartoonStudioViewModel(
                     title = sc.title,
                     visualPrompt = sc.visualPrompt,
                     cameraMotion = sc.cameraMotion.key,
-                    moodMusic = sc.moodMusic.key,
+                    moodMusic = (bgmTrack.fixedMood ?: sc.moodMusic).key,
                     sfxCue = sc.sfxCue.key,
                     characterNames = sc.characterNames,
                     dialogues = sc.dialogues.map { it.toFirestoreMap() },
@@ -561,15 +696,19 @@ class CartoonStudioViewModel(
             }
             for (charSpec in script.characters.take(3)) {
                 if (referencePortraits.keys.none { it.equals(charSpec.name, ignoreCase = true) }) {
-                    val portrait = retryOperation(maxAttempts = 2) {
+                    val existingSheet = File(filesDir, "characters/$projectId/${charSpec.name.replace(Regex("[^a-zA-Z0-9_\\-]"), "_")}.jpg")
+                    val portrait = if (existingSheet.exists() && existingSheet.length() > 0L) {
+                        BitmapFactory.decodeFile(existingSheet.absolutePath)
+                    } else {
+                        null
+                    } ?: retryOperation(maxAttempts = 2) {
                         aiService.generateCharacterPortrait(charSpec, style)
-                    }
+                    }.also { saveCharacterSheetFile(projectId, charSpec.name, it) }
                     referencePortraits[charSpec.name] = portrait
-                    saveCharacterSheetFile(projectId, charSpec.name, portrait)
                 }
             }
 
-            // 4. Generate every scene frame in job queue with retries & progress updates
+            // 4. Generate every scene frame in queue with auto-save per scene
             _pipelineState.update {
                 it.copy(
                     phase = PipelinePhase.RENDERING_SCENES,
@@ -637,137 +776,361 @@ class CartoonStudioViewModel(
                 )
             }
 
-            // 5. Synthesize voices, dialogues, BGM, SFX & lip-sync envelopes
-            _pipelineState.update {
-                it.copy(
-                    phase = PipelinePhase.SYNTHESIZING_VOICES,
-                    progressPercent = 74,
-                    statusDetail = "Synthesizing ${language.label} voices, lip-sync & soundtrack..."
-                )
-            }
-            val pitchMap = script.characters.associate { it.name to it.voicePitch }
-            val minPerSceneSec = (durationOption.targetSeconds / totalScenes).coerceIn(3, 15)
-            val sceneInputs = mutableListOf<SceneRenderInput>()
-
-            for ((index, sceneSpec) in script.scenes.withIndex()) {
-                val audio = audioEngine.synthesizeSceneAudio(
-                    sceneIndex = index,
-                    dialogues = sceneSpec.dialogues,
-                    language = language,
-                    moodMusic = sceneSpec.moodMusic,
-                    sfxCue = sceneSpec.sfxCue,
-                    targetMinSeconds = minPerSceneSec,
-                    characterPitches = pitchMap
-                )
-                sceneInputs.add(
-                    SceneRenderInput(
-                        scene = initialSceneRecords[index],
-                        bitmap = sceneBitmaps[index],
-                        audio = audio
-                    )
-                )
-            }
-
-            // 6. Encode combined scenes + audio into final MP4 movie
-            _pipelineState.update {
-                it.copy(
-                    phase = PipelinePhase.ENCODING_VIDEO,
-                    progressPercent = 84,
-                    statusDetail = "Rendering final animated MP4 video..."
-                )
-            }
-            val renderResult = videoRenderer.renderMovieMp4(
+            // 5 & 6. Synthesize strictly-capped voices/BGM/SFX + Render final MP4
+            finalizeMovieEncoding(
                 projectId = projectId,
                 movieTitle = movieTitle,
+                style = style,
+                language = language,
                 aspectRatio = aspectRatio,
                 resolution = resolution,
-                sceneInputs = sceneInputs
-            ) { pct, detail ->
-                val overall = 84 + (pct * 0.15f).toInt()
-                _pipelineState.update {
-                    it.copy(
-                        progressPercent = overall.coerceIn(84, 99),
-                        statusDetail = detail
+                strictTargetSeconds = strictTargetSeconds,
+                durationLabelText = durationLabelText,
+                bgmOverride = bgmTrack.fixedMood,
+                pitchMap = script.characters.associate { it.name to it.voicePitch },
+                sceneRecords = initialSceneRecords,
+                sceneBitmaps = sceneBitmaps,
+                onOpenPlayer = onOpenPlayer
+            )
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handlePipelineFailure(
+                error = e,
+                projectId = projectId,
+                durationLabelText = durationLabelText,
+                language = language,
+                style = style
+            )
+        }
+    }
+
+    private suspend fun runResumeSavedScenesPipeline(
+        project: CartoonProject,
+        savedScenes: List<SceneRecord>,
+        bgmTrack: BgmTrackOption,
+        onOpenPlayer: (String) -> Unit
+    ) {
+        val projectId = project.id
+        val style = CartoonStyle.fromKey(project.style)
+        val language = CartoonLanguage.fromKey(project.language)
+        val aspectRatio = VideoAspectRatio.fromKey(project.aspectRatio)
+        val resolution = VideoResolution.fromKey(project.resolution)
+        val strictTargetSeconds = project.durationSeconds.toInt().coerceIn(60, VideoDurationOption.MAX_STORY_SECONDS)
+        val clampedMinutes = (strictTargetSeconds / 60).coerceIn(
+            VideoDurationOption.MIN_STORY_MINUTES,
+            VideoDurationOption.MAX_STORY_MINUTES
+        )
+        val durationLabelText = "${clampedMinutes}m"
+        val sortedScenes = savedScenes.sortedBy { it.sceneIndex }
+        val totalScenes = sortedScenes.size
+
+        try {
+            _selectedProjectId.value = projectId
+            val savedChars = (charactersState.value as? DataUiState.Success)?.data.orEmpty()
+            val refPortraits = mutableMapOf<String, Bitmap>()
+            savedChars.forEach { ch ->
+                loadSavedCharacterBitmap(ch)?.let { refPortraits[ch.name] = it }
+            }
+            val charDir = File(filesDir, "characters/$projectId")
+            if (charDir.exists()) {
+                charDir.listFiles()?.forEach { f ->
+                    if (f.extension.equals("jpg", ignoreCase = true) && f.length() > 0L) {
+                        BitmapFactory.decodeFile(f.absolutePath)?.let { bmp ->
+                            refPortraits.putIfAbsent(f.nameWithoutExtension, bmp)
+                        }
+                    }
+                }
+            }
+            val charSpecs = savedChars.map {
+                GeneratedCharacterSpec(
+                    name = it.name,
+                    role = it.role,
+                    appearance = it.appearance,
+                    outfit = it.outfit,
+                    voiceGender = VoiceGender.fromKey(it.voiceGender),
+                    voicePitch = it.voicePitch.toFloat()
+                )
+            }
+
+            val jobs = sortedScenes.map { sc ->
+                val hasFile = !sc.localImagePath.isNullOrBlank() && File(sc.localImagePath).let { it.exists() && it.length() > 0L }
+                val done = sc.status == SceneStatus.COMPLETED.key && hasFile
+                SceneJobProgress(
+                    sceneId = sc.id,
+                    sceneIndex = sc.sceneIndex.toInt(),
+                    title = sc.title,
+                    status = if (done) SceneStatus.COMPLETED else SceneStatus.PENDING
+                )
+            }.toMutableList()
+
+            val preCompleted = jobs.count { it.status == SceneStatus.COMPLETED }
+            _pipelineState.value = GenerationPipelineState(
+                isRunning = true,
+                activeProjectId = projectId,
+                activeTitle = project.title,
+                phase = PipelinePhase.RENDERING_SCENES,
+                progressPercent = 25 + ((preCompleted.toFloat() / totalScenes) * 45).toInt(),
+                statusDetail = "Resuming saved queue ($preCompleted/$totalScenes scenes already saved)...",
+                sceneJobs = jobs.toList()
+            )
+            updateProject(
+                projectId = projectId,
+                status = ProjectStatus.GENERATING.key,
+                progressPercent = _pipelineState.value.progressPercent,
+                completedScenes = preCompleted
+            )
+
+            val sceneBitmaps = mutableListOf<Bitmap>()
+            var completedCount = preCompleted
+
+            for ((idx, sc) in sortedScenes.withIndex()) {
+                val existingFile = sc.localImagePath?.let { File(it) }?.takeIf { it.exists() && it.length() > 0L }
+                val cachedBitmap = if (sc.status == SceneStatus.COMPLETED.key && existingFile != null) {
+                    BitmapFactory.decodeFile(existingFile.absolutePath)
+                } else null
+
+                if (cachedBitmap != null) {
+                    sceneBitmaps.add(cachedBitmap)
+                } else {
+                    jobs[idx] = jobs[idx].copy(status = SceneStatus.GENERATING, attempt = 1)
+                    _pipelineState.update {
+                        it.copy(
+                            sceneJobs = jobs.toList(),
+                            statusDetail = "Resuming Scene ${idx + 1}/$totalScenes: ${sc.title}"
+                        )
+                    }
+                    updateScene(
+                        projectId = projectId,
+                        sceneId = sc.id,
+                        status = SceneStatus.GENERATING.key,
+                        retryCount = sc.retryCount + 1
+                    )
+                    val spec = GeneratedSceneSpec(
+                        sceneIndex = sc.sceneIndex.toInt(),
+                        title = sc.title,
+                        visualPrompt = sc.visualPrompt,
+                        cameraMotion = CameraMotion.fromKey(sc.cameraMotion),
+                        moodMusic = MoodMusic.fromKey(sc.moodMusic),
+                        sfxCue = SfxCue.fromKey(sc.sfxCue),
+                        characterNames = sc.characterNames,
+                        dialogues = sc.parsedDialogues()
+                    )
+                    var attemptsUsed = 0
+                    val bitmap = retryOperation(maxAttempts = 2, onRetry = { attempt ->
+                        attemptsUsed = attempt
+                        jobs[idx] = jobs[idx].copy(attempt = attempt + 1)
+                        _pipelineState.update { it.copy(sceneJobs = jobs.toList()) }
+                    }) {
+                        aiService.generateSceneArtwork(spec, charSpecs, refPortraits, style, aspectRatio)
+                    }
+                    val savedFile = saveSceneFrameFile(projectId, sc.sceneIndex.toInt(), bitmap)
+                    sceneBitmaps.add(bitmap)
+                    completedCount++
+                    jobs[idx] = jobs[idx].copy(status = SceneStatus.COMPLETED)
+                    val pct = 25 + ((completedCount.toFloat() / totalScenes) * 45).toInt()
+                    _pipelineState.update {
+                        it.copy(progressPercent = pct, sceneJobs = jobs.toList())
+                    }
+                    updateScene(
+                        projectId = projectId,
+                        sceneId = sc.id,
+                        status = SceneStatus.COMPLETED.key,
+                        retryCount = sc.retryCount + attemptsUsed + 1,
+                        localImagePath = savedFile.absolutePath
+                    )
+                    updateProject(
+                        projectId = projectId,
+                        status = ProjectStatus.GENERATING.key,
+                        progressPercent = pct,
+                        completedScenes = completedCount
                     )
                 }
             }
 
-            val thumbBase64 = sceneBitmaps.firstOrNull()?.let { encodeThumbnailBase64(it) }
-
-            updateProject(
+            finalizeMovieEncoding(
                 projectId = projectId,
-                status = ProjectStatus.COMPLETED.key,
-                progressPercent = 100,
-                completedScenes = totalScenes,
-                durationSeconds = renderResult.durationSeconds,
-                localVideoPath = renderResult.outputFile.absolutePath,
-                thumbnailBase64 = thumbBase64
+                movieTitle = project.title,
+                style = style,
+                language = language,
+                aspectRatio = aspectRatio,
+                resolution = resolution,
+                strictTargetSeconds = strictTargetSeconds,
+                durationLabelText = durationLabelText,
+                bgmOverride = bgmTrack.fixedMood,
+                pitchMap = savedChars.associate { it.name to it.voicePitch.toFloat() },
+                sceneRecords = sortedScenes,
+                sceneBitmaps = sceneBitmaps,
+                onOpenPlayer = onOpenPlayer
             )
-            recordStats(videosIncrement = 1L, scenesIncrement = totalScenes.toLong())
-            recordHistoryEntry(
-                GenerationHistoryEntry(
-                    userId = ownerId,
-                    projectId = projectId,
-                    projectTitle = movieTitle,
-                    actionType = "FULL_MOVIE",
-                    creditsUsed = 0L,
-                    status = "COMPLETED",
-                    durationLabel = durationOption.shortLabel,
-                    language = language.label,
-                    style = style.label,
-                    details = "$totalScenes scenes • ${renderResult.actualWidth}x${renderResult.actualHeight} MP4"
-                )
-            )
-            updatePreferences(style, language)
-
-            lastFailedRequest = null
-            _pipelineState.update {
-                it.copy(
-                    isRunning = false,
-                    phase = PipelinePhase.COMPLETED,
-                    progressPercent = 100,
-                    statusDetail = "Cartoon video ready! (${renderResult.actualWidth}x${renderResult.actualHeight} MP4)",
-                    completedVideoPath = renderResult.outputFile.absolutePath,
-                    errorMessage = null
-                )
-            }
-            onOpenPlayer(projectId)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            Log.e(TAG, "Cartoon generation pipeline failed", e)
-            val errMsg = e.localizedMessage ?: "AI video service failed or is temporarily busy. Tap Retry to try again."
-            projectId?.let { pid ->
-                updateProject(
-                    projectId = pid,
-                    status = ProjectStatus.FAILED.key,
-                    progressPercent = _pipelineState.value.progressPercent,
-                    completedScenes = _pipelineState.value.sceneJobs.count { it.status == SceneStatus.COMPLETED },
-                    errorMessage = errMsg
+            handlePipelineFailure(
+                error = e,
+                projectId = projectId,
+                durationLabelText = durationLabelText,
+                language = language,
+                style = style
+            )
+        }
+    }
+
+    private suspend fun finalizeMovieEncoding(
+        projectId: String,
+        movieTitle: String,
+        style: CartoonStyle,
+        language: CartoonLanguage,
+        aspectRatio: VideoAspectRatio,
+        resolution: VideoResolution,
+        strictTargetSeconds: Int,
+        durationLabelText: String,
+        bgmOverride: MoodMusic?,
+        pitchMap: Map<String, Float>,
+        sceneRecords: List<SceneRecord>,
+        sceneBitmaps: List<Bitmap>,
+        onOpenPlayer: (String) -> Unit
+    ) {
+        val totalScenes = sceneRecords.size.coerceAtLeast(1)
+        val perSceneBudgetSec = (strictTargetSeconds.toFloat() / totalScenes).coerceAtLeast(2f)
+
+        _pipelineState.update {
+            it.copy(
+                phase = PipelinePhase.SYNTHESIZING_VOICES,
+                progressPercent = 74,
+                statusDetail = "Synthesizing ${language.label} voices, lip-sync & soundtrack..."
+            )
+        }
+
+        val sceneInputs = mutableListOf<SceneRenderInput>()
+        for ((index, record) in sceneRecords.withIndex()) {
+            val audio = audioEngine.synthesizeSceneAudio(
+                sceneIndex = index,
+                dialogues = record.parsedDialogues(),
+                language = language,
+                moodMusic = MoodMusic.fromKey(record.moodMusic),
+                sfxCue = SfxCue.fromKey(record.sfxCue),
+                targetMinSeconds = perSceneBudgetSec.toInt().coerceAtLeast(2),
+                characterPitches = pitchMap,
+                exactDurationSec = perSceneBudgetSec,
+                bgmOverride = bgmOverride
+            )
+            sceneInputs.add(
+                SceneRenderInput(
+                    scene = record,
+                    bitmap = sceneBitmaps[index],
+                    audio = audio
                 )
-                recordHistoryEntry(
-                    GenerationHistoryEntry(
-                        userId = ownerId,
-                        projectId = pid,
-                        projectTitle = _pipelineState.value.activeTitle.ifBlank { "Cartoon Video" },
-                        actionType = "FULL_MOVIE",
-                        creditsUsed = 0L,
-                        status = "FAILED",
-                        durationLabel = durationOption.shortLabel,
-                        language = language.label,
-                        style = style.label,
-                        details = errMsg.take(280)
-                    )
-                )
-            }
+            )
+        }
+
+        _pipelineState.update {
+            it.copy(
+                phase = PipelinePhase.ENCODING_VIDEO,
+                progressPercent = 84,
+                statusDetail = "Rendering final animated MP4 video (max ${strictTargetSeconds}s)..."
+            )
+        }
+        val renderResult = videoRenderer.renderMovieMp4(
+            projectId = projectId,
+            movieTitle = movieTitle,
+            aspectRatio = aspectRatio,
+            resolution = resolution,
+            sceneInputs = sceneInputs,
+            maxTotalDurationSec = strictTargetSeconds
+        ) { pct, detail ->
+            val overall = 84 + (pct * 0.15f).toInt()
             _pipelineState.update {
                 it.copy(
-                    isRunning = false,
-                    phase = PipelinePhase.FAILED,
-                    statusDetail = "Generation failed",
-                    errorMessage = errMsg
+                    progressPercent = overall.coerceIn(84, 99),
+                    statusDetail = detail
                 )
             }
+        }
+
+        val thumbBase64 = sceneBitmaps.firstOrNull()?.let { encodeThumbnailBase64(it) }
+
+        updateProject(
+            projectId = projectId,
+            status = ProjectStatus.COMPLETED.key,
+            progressPercent = 100,
+            completedScenes = totalScenes,
+            durationSeconds = renderResult.durationSeconds,
+            localVideoPath = renderResult.outputFile.absolutePath,
+            thumbnailBase64 = thumbBase64
+        )
+        recordStats(videosIncrement = 1L, scenesIncrement = totalScenes.toLong())
+        recordHistoryEntry(
+            GenerationHistoryEntry(
+                userId = ownerId,
+                projectId = projectId,
+                projectTitle = movieTitle,
+                actionType = "FULL_MOVIE",
+                creditsUsed = 0L,
+                status = "COMPLETED",
+                durationLabel = durationLabelText,
+                language = language.label,
+                style = style.label,
+                details = "$totalScenes scenes • ${renderResult.durationSeconds}s • ${renderResult.actualWidth}x${renderResult.actualHeight} MP4"
+            )
+        )
+        updatePreferences(style, language)
+
+        lastFailedRequest = null
+        _pipelineState.update {
+            it.copy(
+                isRunning = false,
+                phase = PipelinePhase.COMPLETED,
+                progressPercent = 100,
+                statusDetail = "Cartoon video ready! (${renderResult.actualWidth}x${renderResult.actualHeight} MP4)",
+                completedVideoPath = renderResult.outputFile.absolutePath,
+                errorMessage = null
+            )
+        }
+        onOpenPlayer(projectId)
+    }
+
+    private suspend fun handlePipelineFailure(
+        error: Exception,
+        projectId: String?,
+        durationLabelText: String,
+        language: CartoonLanguage,
+        style: CartoonStyle
+    ) {
+        Log.e(TAG, "Cartoon generation pipeline failed", error)
+        val errMsg = error.localizedMessage ?: "AI video service failed or is temporarily busy. Tap Resume Generation to continue from saved progress."
+        val savedCompleted = _pipelineState.value.sceneJobs.count { it.status == SceneStatus.COMPLETED }
+        projectId?.let { pid ->
+            updateProject(
+                projectId = pid,
+                status = ProjectStatus.FAILED.key,
+                progressPercent = _pipelineState.value.progressPercent,
+                completedScenes = savedCompleted,
+                errorMessage = errMsg
+            )
+            recordHistoryEntry(
+                GenerationHistoryEntry(
+                    userId = ownerId,
+                    projectId = pid,
+                    projectTitle = _pipelineState.value.activeTitle.ifBlank { "Cartoon Video" },
+                    actionType = "FULL_MOVIE",
+                    creditsUsed = 0L,
+                    status = "FAILED",
+                    durationLabel = durationLabelText,
+                    language = language.label,
+                    style = style.label,
+                    details = errMsg.take(280)
+                )
+            )
+        }
+        _pipelineState.update {
+            it.copy(
+                isRunning = false,
+                activeProjectId = projectId,
+                phase = PipelinePhase.FAILED,
+                statusDetail = if (savedCompleted > 0) "Progress auto-saved ($savedCompleted scenes). Ready to resume." else "Generation failed",
+                errorMessage = errMsg
+            )
         }
     }
 
@@ -845,6 +1208,9 @@ class CartoonStudioViewModel(
                     )
                 }
                 val sorted = allScenes.sortedBy { it.sceneIndex }
+                val strictMaxSec = project.durationSeconds.toInt().coerceIn(10, VideoDurationOption.MAX_STORY_SECONDS)
+                val perSceneBudget = (strictMaxSec.toFloat() / sorted.size.coerceAtLeast(1)).coerceAtLeast(2f)
+                val bgmOverride = _formState.value.bgmTrack.fixedMood
                 val inputs = sorted.map { sc ->
                     val bmp = if (sc.id == scene.id) {
                         newBitmap
@@ -857,8 +1223,10 @@ class CartoonStudioViewModel(
                         language = lang,
                         moodMusic = MoodMusic.fromKey(sc.moodMusic),
                         sfxCue = SfxCue.fromKey(sc.sfxCue),
-                        targetMinSeconds = 5,
-                        characterPitches = emptyMap()
+                        targetMinSeconds = perSceneBudget.toInt().coerceAtLeast(2),
+                        characterPitches = emptyMap(),
+                        exactDurationSec = perSceneBudget,
+                        bgmOverride = bgmOverride
                     )
                     SceneRenderInput(sc, bmp, audio)
                 }
@@ -867,7 +1235,8 @@ class CartoonStudioViewModel(
                     movieTitle = project.title,
                     aspectRatio = ratio,
                     resolution = res,
-                    sceneInputs = inputs
+                    sceneInputs = inputs,
+                    maxTotalDurationSec = strictMaxSec
                 ) { pct, msg ->
                     _pipelineState.update { it.copy(progressPercent = 65 + (pct * 0.34f).toInt(), statusDetail = msg) }
                 }

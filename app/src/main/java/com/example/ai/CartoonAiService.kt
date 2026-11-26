@@ -2,6 +2,7 @@ package com.example.ai
 
 import android.graphics.Bitmap
 import android.util.Log
+import com.example.data.model.BgmTrackOption
 import com.example.data.model.CameraMotion
 import com.example.data.model.CartoonLanguage
 import com.example.data.model.CartoonStyle
@@ -13,6 +14,7 @@ import com.example.data.model.GeneratedSceneSpec
 import com.example.data.model.MoodMusic
 import com.example.data.model.SavedCharacter
 import com.example.data.model.SfxCue
+import com.example.data.model.StoryGenre
 import com.example.data.model.VideoAspectRatio
 import com.example.data.model.VideoDurationOption
 import com.example.data.model.VoiceGender
@@ -65,7 +67,9 @@ class CartoonAiService {
                         "title" to Schema.string(description = "Short scene title"),
                         "visualPrompt" to Schema.string(description = "Detailed visual scene description including setting, action, lighting, and exact character appearance/clothes"),
                         "cameraMotion" to Schema.enumeration(listOf("PAN_LEFT", "PAN_RIGHT", "ZOOM_IN", "ZOOM_OUT", "STATIC")),
-                        "moodMusic" to Schema.enumeration(listOf("PLAYFUL", "ADVENTURE", "MYSTERY", "EPIC", "COMEDY")),
+                        "moodMusic" to Schema.enumeration(
+                            listOf("PLAYFUL", "ADVENTURE", "MYSTERY", "EPIC", "COMEDY", "EMOTIONAL", "SPOOKY", "UPBEAT_KIDS")
+                        ),
                         "sfxCue" to Schema.enumeration(listOf("WHOOSH", "SPARKLE", "POP", "THUNDER", "FOOTSTEPS", "NONE")),
                         "characterNames" to Schema.array(items = Schema.string()),
                         "dialogues" to Schema.array(
@@ -124,11 +128,13 @@ class CartoonAiService {
     suspend fun generateStoryIdea(
         seedPrompt: String,
         style: CartoonStyle,
-        language: CartoonLanguage
+        language: CartoonLanguage,
+        genre: StoryGenre = StoryGenre.AUTO
     ): String {
         val instruction = buildString {
             appendLine("You are an award-winning cartoon screenwriter.")
             appendLine("Write a vivid, family-friendly cartoon story outline (4-6 sentences) suitable for a ${style.label} movie.")
+            appendLine("Genre tone: ${genre.label} (${genre.promptGuidance})")
             appendLine("Write the story in ${language.label}.")
             appendLine("Include 2-3 memorable characters with distinct visual traits and outfits, a clear adventure/conflict, and a fun ending.")
             if (seedPrompt.isNotBlank()) {
@@ -164,11 +170,18 @@ class CartoonAiService {
     suspend fun generateFullScript(
         prompt: String,
         style: CartoonStyle,
-        durationOption: VideoDurationOption,
+        targetSeconds: Int,
+        sceneCount: Int,
         language: CartoonLanguage,
-        lockedCharacters: List<SavedCharacter>
+        lockedCharacters: List<SavedCharacter>,
+        genre: StoryGenre = StoryGenre.AUTO,
+        bgmOption: BgmTrackOption = BgmTrackOption.AUTO
     ): GeneratedMovieScript {
-        val targetScenes = durationOption.sceneCount
+        val clampedSeconds = targetSeconds.coerceIn(10, VideoDurationOption.MAX_STORY_SECONDS)
+        val totalScenes = sceneCount.coerceIn(2, 30)
+        val durationLabel = if (clampedSeconds >= 60) "${clampedSeconds / 60} min" else "${clampedSeconds}s"
+        val maxBatchSize = 10
+
         val castSection = if (lockedCharacters.isNotEmpty()) {
             buildString {
                 appendLine("MANDATORY SAVED CHARACTERS (must appear consistently with these exact names, appearances, outfits, and voice genders):")
@@ -180,41 +193,90 @@ class CartoonAiService {
             "Create 2 to 3 distinct recurring cartoon characters with vivid, consistent appearances and outfits."
         }
 
-        val scriptPrompt = buildString {
-            appendLine("You are the showrunner and director of CARTOON AI.")
-            appendLine("Convert the user's cartoon story into a complete multi-scene animated movie script.")
-            appendLine()
-            appendLine("USER STORY PROMPT: \"$prompt\"")
-            appendLine("VISUAL STYLE: ${style.label} (${style.promptAnchor})")
-            appendLine("TARGET DURATION: ${durationOption.label} (${durationOption.targetSeconds}s)")
-            appendLine("DIALOGUE LANGUAGE: ${language.label} — ALL spoken dialogue lines MUST be written naturally in ${language.label}.")
-            appendLine("EXACT SCENE COUNT: Generate exactly $targetScenes connected scenes forming a complete beginning, middle, and ending.")
-            appendLine(castSection)
-            appendLine()
-            appendLine("CHARACTER CONSISTENCY RULES:")
-            appendLine("1. Every scene's visualPrompt must repeat the exact appearance and outfit of characters present in that scene so image generation stays 100% consistent.")
-            appendLine("2. Each scene must include 1 to 3 spoken dialogue lines with speaker name, gender, expression, natural dialogue in ${language.label}, and spoken durationSec (3..8).")
-            appendLine("3. Choose appropriate cameraMotion, moodMusic, and sfxCue per scene.")
+        val allScenes = mutableListOf<GeneratedSceneSpec>()
+        var movieTitle = "Cartoon AI Story"
+        var movieLogline = ""
+        var establishedCharacters = emptyList<GeneratedCharacterSpec>()
+
+        var remaining = totalScenes
+        var batchIndex = 0
+        while (remaining > 0) {
+            val batchCount = remaining.coerceAtMost(maxBatchSize)
+            val startSceneNum = allScenes.size + 1
+            val endSceneNum = allScenes.size + batchCount
+
+            val scriptPrompt = buildString {
+                appendLine("You are the showrunner and director of CARTOON AI.")
+                appendLine("Convert the user's cartoon story into a continuous multi-scene animated movie script.")
+                appendLine()
+                appendLine("USER STORY PROMPT: \"$prompt\"")
+                appendLine("VISUAL STYLE: ${style.label} (${style.promptAnchor})")
+                appendLine("STORY GENRE: ${genre.label} — ${genre.promptGuidance}")
+                if (bgmOption.fixedMood != null) {
+                    appendLine("PREFERRED SOUNDTRACK MOOD: ${bgmOption.fixedMood.key} (${bgmOption.label})")
+                }
+                appendLine("STRICT MAXIMUM DURATION: $durationLabel (${clampedSeconds}s total across $totalScenes scenes — DO NOT exceed this pace).")
+                appendLine("DIALOGUE LANGUAGE: ${language.label} — ALL spoken dialogue lines MUST be written naturally in ${language.label}.")
+                appendLine("CURRENT BATCH: Generate exactly $batchCount connected scenes (Scenes $startSceneNum to $endSceneNum out of $totalScenes total scenes).")
+                if (batchIndex == 0) {
+                    appendLine(castSection)
+                } else {
+                    appendLine("CONTINUING STORY CHAPTER ${batchIndex + 1}:")
+                    appendLine("Movie Title: \"$movieTitle\". Logline: $movieLogline")
+                    appendLine("KEEP THESE EXACT ESTABLISHED CHARACTERS (same names, outfits, voices):")
+                    establishedCharacters.forEach { ch ->
+                        appendLine("- ${ch.name} (${ch.role}): Appearance=${ch.appearance}; Outfit=${ch.outfit}; Voice=${ch.voiceGender.key}, Pitch=${ch.voicePitch}")
+                    }
+                    val lastScene = allScenes.lastOrNull()
+                    if (lastScene != null) {
+                        appendLine("PREVIOUS SCENE ENDED WITH: Scene ${lastScene.sceneIndex + 1} '${lastScene.title}' — ${lastScene.visualPrompt}")
+                        appendLine("Continue the exact same storyline seamlessly from Scene $startSceneNum to Scene $endSceneNum.")
+                    }
+                }
+                appendLine()
+                appendLine("CHARACTER & STORY CONTINUITY RULES:")
+                appendLine("1. Every scene's visualPrompt must repeat the exact appearance and outfit of characters present in that scene so image generation stays 100% consistent.")
+                appendLine("2. Each scene must include 1 to 3 spoken dialogue lines with speaker name, gender, expression, natural dialogue in ${language.label}, and spoken durationSec (3..8).")
+                appendLine("3. Choose appropriate cameraMotion, moodMusic, and sfxCue per scene.")
+            }
+
+            try {
+                val response = withTimeout(75_000L) {
+                    scriptModel.generateContent(scriptPrompt)
+                }
+                val jsonText = response.text?.takeIf { it.isNotBlank() }
+                    ?: throw IllegalStateException("AI script model returned an empty response.")
+                val parsedBatch = parseMovieScript(jsonText, lockedCharacters, batchCount)
+                if (batchIndex == 0) {
+                    movieTitle = parsedBatch.title
+                    movieLogline = parsedBatch.logline
+                    establishedCharacters = parsedBatch.characters
+                }
+                val offset = allScenes.size
+                parsedBatch.scenes.forEachIndexed { idx, sc ->
+                    allScenes.add(sc.copy(sceneIndex = offset + idx))
+                }
+                remaining -= parsedBatch.scenes.size.coerceAtLeast(1)
+                batchIndex++
+            } catch (e: TimeoutCancellationException) {
+                throw IllegalStateException("Script generation timed out. Please retry.", e)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.e(TAG, "generateFullScript failed", e)
+                throw IllegalStateException(
+                    "AI Script service error: ${e.localizedMessage ?: "Firebase AI Logic is not configured or unavailable."}",
+                    e
+                )
+            }
         }
 
-        return try {
-            val response = withTimeout(60_000L) {
-                scriptModel.generateContent(scriptPrompt)
-            }
-            val jsonText = response.text?.takeIf { it.isNotBlank() }
-                ?: throw IllegalStateException("AI script model returned an empty response.")
-            parseMovieScript(jsonText, lockedCharacters, targetScenes)
-        } catch (e: TimeoutCancellationException) {
-            throw IllegalStateException("Script generation timed out after 60s. Please retry.", e)
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            Log.e(TAG, "generateFullScript failed", e)
-            throw IllegalStateException(
-                "AI Script service error: ${e.localizedMessage ?: "Firebase AI Logic is not configured or unavailable."}",
-                e
-            )
-        }
+        return GeneratedMovieScript(
+            title = movieTitle,
+            logline = movieLogline,
+            characters = establishedCharacters,
+            scenes = allScenes.take(totalScenes)
+        )
     }
 
     private fun parseMovieScript(

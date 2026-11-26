@@ -41,12 +41,16 @@ import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -128,6 +132,7 @@ fun HomeDashboardScreen(
     completedProject: CartoonProject?,
     onPromptChange: (String) -> Unit,
     onClearPrompt: () -> Unit,
+    onSelectDurationMinutes: (Int) -> Unit,
     onGenerateCartoon: () -> Unit,
     onRetryGeneration: () -> Unit,
     onCancelGeneration: () -> Unit,
@@ -278,7 +283,7 @@ fun HomeDashboardScreen(
                             color = MaterialTheme.colorScheme.onBackground
                         )
                         Text(
-                            text = "${formState.style.label} • ${formState.duration.shortLabel} • ${formState.resolution.label}",
+                            text = "${formState.style.label} • ${formState.durationMinutes} min • ${formState.resolution.label}",
                             style = MaterialTheme.typography.labelSmall,
                             color = CyanSpark
                         )
@@ -363,6 +368,65 @@ fun HomeDashboardScreen(
                             Icon(Icons.Filled.Tune, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(6.dp))
                             Text("Style & Settings")
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    // Story Duration Selector (1–30 Minutes, strictly capped at 30 min max)
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(StudioSurface.copy(alpha = 0.72f))
+                            .padding(horizontal = 12.dp, vertical = 10.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "Story Duration (1–30 Min)",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = MaterialTheme.colorScheme.onBackground
+                            )
+                            Text(
+                                text = "${formState.durationMinutes} min • ${formState.plannedSceneCount} scenes (max ${formState.durationMinutes}m)",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                color = CyanSpark
+                            )
+                        }
+                        Slider(
+                            value = formState.durationMinutes.toFloat(),
+                            onValueChange = { onSelectDurationMinutes(it.toInt().coerceIn(1, 30)) },
+                            valueRange = 1f..30f,
+                            steps = 28,
+                            colors = SliderDefaults.colors(
+                                thumbColor = CyanSpark,
+                                activeTrackColor = ElectricViolet,
+                                inactiveTrackColor = StudioOutline
+                            ),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("home_duration_slider")
+                        )
+                        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            items(listOf(1, 5, 10, 15, 20, 30)) { mins ->
+                                val selected = formState.durationMinutes == mins
+                                FilterChip(
+                                    selected = selected,
+                                    onClick = { onSelectDurationMinutes(mins) },
+                                    label = { Text(if (mins == 30) "30m Max" else "${mins}m") },
+                                    colors = FilterChipDefaults.filterChipColors(
+                                        selectedContainerColor = ElectricViolet.copy(alpha = 0.34f),
+                                        selectedLabelColor = Color.White,
+                                        containerColor = StudioSurfaceCard,
+                                        labelColor = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                )
+                            }
                         }
                     }
 
@@ -471,7 +535,7 @@ fun HomeDashboardScreen(
                                 ) {
                                     Icon(Icons.Filled.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
                                     Spacer(modifier = Modifier.width(6.dp))
-                                    Text(stringResource(R.string.btn_retry_generation))
+                                    Text(stringResource(R.string.btn_resume_generation))
                                 }
                             }
                         }

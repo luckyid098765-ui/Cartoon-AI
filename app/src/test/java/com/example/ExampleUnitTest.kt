@@ -1,11 +1,14 @@
 package com.example
 
+import com.example.data.model.BgmTrackOption
 import com.example.data.model.CartoonLanguage
 import com.example.data.model.CartoonProject
 import com.example.data.model.CartoonStyle
 import com.example.data.model.DialogueLine
 import com.example.data.model.GenerationHistoryEntry
+import com.example.data.model.MoodMusic
 import com.example.data.model.ProjectStatus
+import com.example.data.model.StoryGenre
 import com.example.data.model.VideoAspectRatio
 import com.example.data.model.VideoDurationOption
 import com.example.data.model.VideoResolution
@@ -23,6 +26,19 @@ class ExampleUnitTest {
         assertEquals(CartoonStyle.CARTOON_3D, CartoonStyle.fromKey("UNKNOWN_STYLE"))
         assertEquals(CartoonLanguage.HINDI, CartoonLanguage.fromKey("HINDI"))
         assertEquals(CartoonLanguage.BENGALI, CartoonLanguage.fromKey("BENGALI"))
+        assertEquals(CartoonLanguage.SPANISH, CartoonLanguage.fromKey("SPANISH"))
+        assertEquals(CartoonLanguage.JAPANESE, CartoonLanguage.fromKey("JAPANESE"))
+        assertEquals(30, VideoDurationOption.MAX_STORY_MINUTES)
+        assertEquals(1800, VideoDurationOption.MAX_STORY_SECONDS)
+        assertEquals(VideoDurationOption.MIN_30, VideoDurationOption.forMinutes(35))
+        assertEquals(VideoDurationOption.MIN_1, VideoDurationOption.forMinutes(0))
+        assertEquals(1800, VideoDurationOption.MIN_30.targetSeconds)
+        assertEquals(30, VideoDurationOption.sceneCountForMinutes(30))
+        assertEquals(4, VideoDurationOption.sceneCountForMinutes(1))
+        assertTrue(VideoDurationOption.sceneCountForMinutes(15) in 10..30)
+        assertEquals(StoryGenre.HORROR, StoryGenre.fromKey("HORROR"))
+        assertEquals(MoodMusic.EMOTIONAL, BgmTrackOption.EMOTIONAL.fixedMood)
+        assertEquals(MoodMusic.SPOOKY, BgmTrackOption.MYSTERY.fixedMood)
         assertEquals(VideoDurationOption.SEC_10, VideoDurationOption.fromKey("SEC_10"))
         assertEquals(10, VideoDurationOption.SEC_10.targetSeconds)
         assertEquals(VideoDurationOption.MIN_2, VideoDurationOption.fromKey("MIN_2"))

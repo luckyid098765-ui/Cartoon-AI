@@ -24,16 +24,18 @@ import com.example.data.model.SceneRecord
 import com.example.data.model.VideoAspectRatio
 import com.example.data.model.VideoResolution
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
-import kotlin.math.cos
+import kotlin.coroutines.coroutineContext
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.sin
 
 private const val TAG = "CartoonVideoRenderer"
+private const val MAX_ALLOWED_MOVIE_SECONDS = 1800
 
 data class SceneRenderInput(
     val scene: SceneRecord,
@@ -48,6 +50,52 @@ data class RenderResult(
     val durationSeconds: Int
 )
 
+private class FrameDrawPaints(width: Int, height: Int) {
+    val bitmapPaint = Paint(Paint.FILTER_BITMAP_FLAG)
+    val sparklePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.argb(110, 178, 152, 255)
+    }
+    val titlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        textSize = width * 0.042f
+        typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+    }
+    val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeWidth = 3f
+        color = Color.argb(200, 139, 92, 246)
+    }
+    val avatarRingPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.rgb(124, 58, 237)
+    }
+    val mouthPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.rgb(255, 190, 215)
+    }
+    val eyePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.WHITE
+    }
+    val speakerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.rgb(96, 165, 250)
+        textSize = height * 0.028f
+        typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+    }
+    val subtitlePaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.WHITE
+        textSize = height * 0.032f
+    }
+    val boxPadX = width * 0.05f
+    val boxBottom = height * 0.94f
+    val boxHeight = height * 0.17f
+    val boxRect = RectF(boxPadX, boxBottom - boxHeight, width - boxPadX, boxBottom)
+    val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        shader = LinearGradient(
+            boxRect.left, boxRect.top, boxRect.right, boxRect.bottom,
+            Color.argb(215, 16, 12, 38),
+            Color.argb(215, 24, 34, 82),
+            Shader.TileMode.CLAMP
+        )
+    }
+}
+
 class CartoonVideoRenderer(private val context: Context) {
 
     suspend fun renderMovieMp4(
@@ -56,31 +104,43 @@ class CartoonVideoRenderer(private val context: Context) {
         aspectRatio: VideoAspectRatio,
         resolution: VideoResolution,
         sceneInputs: List<SceneRenderInput>,
+        maxTotalDurationSec: Int = MAX_ALLOWED_MOVIE_SECONDS,
         onProgress: (Int, String) -> Unit
     ): RenderResult = withContext(Dispatchers.IO) {
         val moviesDir = File(context.filesDir, "movies").apply { mkdirs() }
         val outFile = File(moviesDir, "${projectId}.mp4")
         if (outFile.exists()) outFile.delete()
 
+        val strictMaxSec = maxTotalDurationSec.coerceIn(1, MAX_ALLOWED_MOVIE_SECONDS)
         val (targetW, targetH) = resolveSupportedVideoDimensions(aspectRatio, resolution)
-        val fps = VoiceAndAudioEngine.LIP_SYNC_FPS
         val sampleRate = VoiceAndAudioEngine.TARGET_SAMPLE_RATE
 
-        // Combine all scene PCM audio into one continuous audio buffer
-        val totalAudioSamples = sceneInputs.sumOf { it.audio.pcmSamples.size }
+        // Combine all scene PCM audio into one continuous buffer, strictly capped to user's selected max duration
+        val rawAudioSamples = sceneInputs.sumOf { it.audio.pcmSamples.size }
+        val maxAudioSamples = strictMaxSec * sampleRate
+        val totalAudioSamples = min(rawAudioSamples, maxAudioSamples).coerceAtLeast(sampleRate)
         val combinedPcm = ShortArray(totalAudioSamples)
         var audioCursor = 0
         for (input in sceneInputs) {
-            input.audio.pcmSamples.copyInto(combinedPcm, destinationOffset = audioCursor)
-            audioCursor += input.audio.pcmSamples.size
+            if (audioCursor >= totalAudioSamples) break
+            val copyCount = min(input.audio.pcmSamples.size, totalAudioSamples - audioCursor)
+            input.audio.pcmSamples.copyInto(combinedPcm, destinationOffset = audioCursor, startIndex = 0, endIndex = copyCount)
+            audioCursor += copyCount
         }
-        val totalDurationSec = (totalAudioSamples.toFloat() / sampleRate).coerceAtLeast(1f)
+        val totalDurationSec = (totalAudioSamples.toFloat() / sampleRate).coerceIn(1f, strictMaxSec.toFloat())
+
+        // Adaptive FPS ensures crisp motion on short clips and reliable memory/speed up to 30 minutes
+        val fps = when {
+            totalDurationSec <= 240f -> 24
+            totalDurationSec <= 720f -> 15
+            else -> 12
+        }
 
         val videoFormat = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, targetW, targetH).apply {
             setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
-            setInteger(MediaFormat.KEY_BIT_RATE, (targetW * targetH * 3).coerceIn(1_500_000, 12_000_000))
+            setInteger(MediaFormat.KEY_BIT_RATE, (targetW * targetH * 3).coerceIn(1_500_000, 10_000_000))
             setInteger(MediaFormat.KEY_FRAME_RATE, fps)
-            setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
+            setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 2)
         }
 
         val audioFormat = MediaFormat.createAudioFormat(MediaFormat.MIMETYPE_AUDIO_AAC, sampleRate, 1).apply {
@@ -109,9 +169,22 @@ class CartoonVideoRenderer(private val context: Context) {
             val videoBufferInfo = MediaCodec.BufferInfo()
             val audioBufferInfo = MediaCodec.BufferInfo()
 
-            val totalVideoFrames = sceneInputs.sumOf {
-                (it.audio.durationSec * fps).toInt().coerceAtLeast(fps)
+            val maxTotalVideoFrames = (strictMaxSec * fps).coerceAtLeast(fps)
+            val sceneFrameList = buildList {
+                var accumulatedFrames = 0
+                sceneInputs.forEachIndexed { sIdx, input ->
+                    if (accumulatedFrames >= maxTotalVideoFrames) return@forEachIndexed
+                    val rawCount = (input.audio.durationSec * fps).toInt().coerceAtLeast(fps)
+                    val frameCount = min(rawCount, maxTotalVideoFrames - accumulatedFrames)
+                    for (f in 0 until frameCount) {
+                        add(Triple(sIdx, input, f to frameCount))
+                    }
+                    accumulatedFrames += frameCount
+                }
             }
+            val totalVideoFrames = sceneFrameList.size.coerceAtLeast(1)
+            val paints = FrameDrawPaints(targetW, targetH)
+
             var globalFrame = 0
             var audioSampleOffset = 0
             var audioEosSent = false
@@ -119,16 +192,9 @@ class CartoonVideoRenderer(private val context: Context) {
             var videoDone = false
             var audioDone = false
 
-            val sceneFrameList = buildList {
-                sceneInputs.forEachIndexed { sIdx, input ->
-                    val frameCount = (input.audio.durationSec * fps).toInt().coerceAtLeast(fps)
-                    for (f in 0 until frameCount) {
-                        add(Triple(sIdx, input, f to frameCount))
-                    }
-                }
-            }
-
             while (!videoDone || !audioDone) {
+                coroutineContext.ensureActive()
+
                 // Feed one video frame per loop iteration if frames remain
                 if (!videoEosSent) {
                     if (globalFrame < sceneFrameList.size) {
@@ -146,15 +212,16 @@ class CartoonVideoRenderer(private val context: Context) {
                                 localFrame = localFrame,
                                 sceneTotalFrames = sceneTotalFrames,
                                 isFirstSceneOpening = sIdx == 0 && localFrame < fps * 2,
-                                fps = fps
+                                fps = fps,
+                                paints = paints
                             )
                         } finally {
                             inputSurface.unlockCanvasAndPost(canvas)
                         }
                         globalFrame++
                         if (globalFrame % 12 == 0 || globalFrame == sceneFrameList.size) {
-                            val pct = ((globalFrame.toFloat() / max(1, totalVideoFrames)) * 100).toInt()
-                            onProgress(pct.coerceIn(0, 99), "Encoding frame $globalFrame / $totalVideoFrames")
+                            val pct = ((globalFrame.toFloat() / totalVideoFrames) * 100).toInt()
+                            onProgress(pct.coerceIn(0, 99), "Encoding frame $globalFrame / $totalVideoFrames (${fps}fps)")
                         }
                     } else {
                         videoEncoder.signalEndOfInputStream()
@@ -261,7 +328,7 @@ class CartoonVideoRenderer(private val context: Context) {
                 outputFile = outFile,
                 actualWidth = targetW,
                 actualHeight = targetH,
-                durationSeconds = totalDurationSec.toInt().coerceAtLeast(1)
+                durationSeconds = totalDurationSec.toInt().coerceIn(1, strictMaxSec)
             )
         } finally {
             runCatching { videoEncoder.stop() }
@@ -315,7 +382,8 @@ class CartoonVideoRenderer(private val context: Context) {
         localFrame: Int,
         sceneTotalFrames: Int,
         isFirstSceneOpening: Boolean,
-        fps: Int
+        fps: Int,
+        paints: FrameDrawPaints
     ) {
         canvas.drawColor(Color.BLACK)
         val t = (localFrame.toFloat() / max(1, sceneTotalFrames - 1)).coerceIn(0f, 1f)
@@ -335,32 +403,30 @@ class CartoonVideoRenderer(private val context: Context) {
             else -> 0f
         }
 
-        drawScaledCropBitmap(canvas, input.bitmap, width, height, zoom, panX, 255)
+        drawScaledCropBitmap(canvas, input.bitmap, width, height, zoom, panX, 255, paints.bitmapPaint)
 
         // Subtle cross-fade at scene end
         val fadeFrames = (fps * 0.45f).toInt().coerceAtLeast(1)
         if (nextBitmap != null && localFrame > sceneTotalFrames - fadeFrames) {
             val fadeAlpha = (((localFrame - (sceneTotalFrames - fadeFrames)).toFloat() / fadeFrames) * 255).toInt()
                 .coerceIn(0, 255)
-            drawScaledCropBitmap(canvas, nextBitmap, width, height, 1.0f, 0f, fadeAlpha)
+            drawScaledCropBitmap(canvas, nextBitmap, width, height, 1.0f, 0f, fadeAlpha, paints.bitmapPaint)
         }
 
         // Animated ambient sparkles
-        val sparklePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.argb(110, 178, 152, 255)
-        }
         for (s in 0..7) {
             val px = ((s * 173 + localFrame * (2 + s % 3)) % width).toFloat()
             val py = ((s * 119 + sin((localFrame + s * 10) * 0.08) * 35) % height).toFloat()
             val radius = 2.5f + (s % 3) * 1.5f
-            canvas.drawCircle(px, py, radius, sparklePaint)
+            canvas.drawCircle(px, py, radius, paints.sparklePaint)
         }
 
-        // Active dialogue, lip-sync mouth badge & subtitle bar
+        // Active dialogue, lip-sync mouth badge & subtitle bar (time-aligned across variable FPS)
         val activeDialogue = input.audio.dialogueTimings.firstOrNull {
             currentSec >= it.startSec && currentSec <= it.endSec
         }
-        val mouthOpen = input.audio.lipSyncEnvelope.getOrElse(localFrame) { 0f }
+        val lipIdx = (currentSec * VoiceAndAudioEngine.LIP_SYNC_FPS).toInt()
+        val mouthOpen = input.audio.lipSyncEnvelope.getOrElse(lipIdx) { 0f }
 
         if (activeDialogue != null) {
             drawDialogueAndLipSyncOverlay(
@@ -370,20 +436,17 @@ class CartoonVideoRenderer(private val context: Context) {
                 speaker = activeDialogue.speaker,
                 expression = activeDialogue.expression,
                 line = activeDialogue.line,
-                mouthOpen = mouthOpen
+                mouthOpen = mouthOpen,
+                paints = paints
             )
         }
 
         // Opening movie title card badge
         if (isFirstSceneOpening) {
             val alpha = ((1f - (localFrame / (fps * 2f))) * 255).toInt().coerceIn(0, 255)
-            val titlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = Color.argb(alpha, 255, 255, 255)
-                textSize = width * 0.042f
-                typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-                setShadowLayer(12f, 0f, 4f, Color.argb(alpha, 90, 40, 200))
-            }
-            canvas.drawText(movieTitle, width * 0.05f, height * 0.11f, titlePaint)
+            paints.titlePaint.color = Color.argb(alpha, 255, 255, 255)
+            paints.titlePaint.setShadowLayer(12f, 0f, 4f, Color.argb(alpha, 90, 40, 200))
+            canvas.drawText(movieTitle, width * 0.05f, height * 0.11f, paints.titlePaint)
         }
     }
 
@@ -394,7 +457,8 @@ class CartoonVideoRenderer(private val context: Context) {
         targetH: Int,
         zoom: Float,
         panX: Float,
-        alpha: Int
+        alpha: Int,
+        paint: Paint
     ) {
         val baseScale = max(targetW.toFloat() / bmp.width, targetH.toFloat() / bmp.height) * zoom
         val drawW = bmp.width * baseScale
@@ -402,7 +466,7 @@ class CartoonVideoRenderer(private val context: Context) {
         val left = (targetW - drawW) / 2f + panX
         val top = (targetH - drawH) / 2f
         val dst = RectF(left, top, left + drawW, top + drawH)
-        val paint = Paint(Paint.FILTER_BITMAP_FLAG).apply { this.alpha = alpha }
+        paint.alpha = alpha
         canvas.drawBitmap(bmp, Rect(0, 0, bmp.width, bmp.height), dst, paint)
     }
 
@@ -413,37 +477,18 @@ class CartoonVideoRenderer(private val context: Context) {
         speaker: String,
         expression: String,
         line: String,
-        mouthOpen: Float
+        mouthOpen: Float,
+        paints: FrameDrawPaints
     ) {
-        val boxPadX = width * 0.05f
-        val boxBottom = height * 0.94f
-        val boxHeight = height * 0.17f
-        val boxRect = RectF(boxPadX, boxBottom - boxHeight, width - boxPadX, boxBottom)
-
-        val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            shader = LinearGradient(
-                boxRect.left, boxRect.top, boxRect.right, boxRect.bottom,
-                Color.argb(215, 16, 12, 38),
-                Color.argb(215, 24, 34, 82),
-                Shader.TileMode.CLAMP
-            )
-        }
-        val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            style = Paint.Style.STROKE
-            strokeWidth = 3f
-            color = Color.argb(200, 139, 92, 246)
-        }
-        canvas.drawRoundRect(boxRect, 24f, 24f, bgPaint)
-        canvas.drawRoundRect(boxRect, 24f, 24f, borderPaint)
+        val boxRect = paints.boxRect
+        canvas.drawRoundRect(boxRect, 24f, 24f, paints.bgPaint)
+        canvas.drawRoundRect(boxRect, 24f, 24f, paints.borderPaint)
 
         // Animated lip-sync avatar mouth circle on left of subtitle card
         val avatarCx = boxRect.left + height * 0.065f
         val avatarCy = boxRect.centerY()
         val avatarR = height * 0.042f
-        val avatarRingPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.rgb(124, 58, 237)
-        }
-        canvas.drawCircle(avatarCx, avatarCy, avatarR, avatarRingPaint)
+        canvas.drawCircle(avatarCx, avatarCy, avatarR, paints.avatarRingPaint)
 
         // Lip-sync mouth opening & closing with voice amplitude
         val mouthH = (avatarR * 0.18f) + (avatarR * 0.55f * mouthOpen)
@@ -453,36 +498,23 @@ class CartoonVideoRenderer(private val context: Context) {
             avatarCx + avatarR * 0.45f,
             avatarCy + avatarR * 0.05f + mouthH * 0.5f
         )
-        val mouthPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.rgb(255, 190, 215)
-        }
-        canvas.drawOval(mouthRect, mouthPaint)
+        canvas.drawOval(mouthRect, paints.mouthPaint)
 
         // Eyes above animated mouth
-        val eyePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
-        canvas.drawCircle(avatarCx - avatarR * 0.3f, avatarCy - avatarR * 0.28f, avatarR * 0.13f, eyePaint)
-        canvas.drawCircle(avatarCx + avatarR * 0.3f, avatarCy - avatarR * 0.28f, avatarR * 0.13f, eyePaint)
+        canvas.drawCircle(avatarCx - avatarR * 0.3f, avatarCy - avatarR * 0.28f, avatarR * 0.13f, paints.eyePaint)
+        canvas.drawCircle(avatarCx + avatarR * 0.3f, avatarCy - avatarR * 0.28f, avatarR * 0.13f, paints.eyePaint)
 
         // Speaker header + Subtitle text
         val textLeft = avatarCx + avatarR + width * 0.025f
-        val speakerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.rgb(96, 165, 250)
-            textSize = height * 0.028f
-            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-        }
         canvas.drawText(
             "$speaker • ${expression.lowercase().replaceFirstChar { it.uppercase() }}",
             textLeft,
             boxRect.top + height * 0.045f,
-            speakerPaint
+            paints.speakerPaint
         )
 
-        val textPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.WHITE
-            textSize = height * 0.032f
-        }
         val availWidth = (boxRect.right - textLeft - width * 0.025f).toInt().coerceAtLeast(100)
-        val layout = StaticLayout.Builder.obtain(line, 0, line.length, textPaint, availWidth)
+        val layout = StaticLayout.Builder.obtain(line, 0, line.length, paints.subtitlePaint, availWidth)
             .setAlignment(Layout.Alignment.ALIGN_NORMAL)
             .setMaxLines(2)
             .build()

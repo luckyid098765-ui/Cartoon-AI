@@ -48,6 +48,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.minimumInteractiveComponentSize
@@ -65,6 +67,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.R
+import com.example.data.model.BgmTrackOption
 import com.example.data.model.CartoonLanguage
 import com.example.data.model.CartoonProject
 import com.example.data.model.CartoonStyle
@@ -72,6 +75,7 @@ import com.example.data.model.GenerationPipelineState
 import com.example.data.model.PipelinePhase
 import com.example.data.model.SavedCharacter
 import com.example.data.model.SceneStatus
+import com.example.data.model.StoryGenre
 import com.example.data.model.VideoAspectRatio
 import com.example.data.model.VideoDurationOption
 import com.example.data.model.VideoResolution
@@ -140,7 +144,9 @@ fun GeneratorStudioScreen(
     onGenerateStory: () -> Unit,
     onApplyCategoryTheme: (CartoonStyle, String) -> Unit,
     onSelectStyle: (CartoonStyle) -> Unit,
-    onSelectDuration: (VideoDurationOption) -> Unit,
+    onSelectGenre: (StoryGenre) -> Unit,
+    onSelectDurationMinutes: (Int) -> Unit,
+    onSelectBgmTrack: (BgmTrackOption) -> Unit,
     onSelectLanguage: (CartoonLanguage) -> Unit,
     onSelectAspectRatio: (VideoAspectRatio) -> Unit,
     onSelectResolution: (VideoResolution) -> Unit,
@@ -237,6 +243,7 @@ fun GeneratorStudioScreen(
                             StyleAndLanguageCard(
                                 formState = formState,
                                 onSelectStyle = onSelectStyle,
+                                onSelectGenre = onSelectGenre,
                                 onSelectLanguage = onSelectLanguage
                             )
                         }
@@ -246,7 +253,8 @@ fun GeneratorStudioScreen(
                         ) {
                             DurationAndVideoSettingsCard(
                                 formState = formState,
-                                onSelectDuration = onSelectDuration,
+                                onSelectDurationMinutes = onSelectDurationMinutes,
+                                onSelectBgmTrack = onSelectBgmTrack,
                                 onSelectAspectRatio = onSelectAspectRatio,
                                 onSelectResolution = onSelectResolution
                             )
@@ -291,13 +299,15 @@ fun GeneratorStudioScreen(
                     StyleAndLanguageCard(
                         formState = formState,
                         onSelectStyle = onSelectStyle,
+                        onSelectGenre = onSelectGenre,
                         onSelectLanguage = onSelectLanguage
                     )
                 }
                 item {
                     DurationAndVideoSettingsCard(
                         formState = formState,
-                        onSelectDuration = onSelectDuration,
+                        onSelectDurationMinutes = onSelectDurationMinutes,
+                        onSelectBgmTrack = onSelectBgmTrack,
                         onSelectAspectRatio = onSelectAspectRatio,
                         onSelectResolution = onSelectResolution
                     )
@@ -539,11 +549,12 @@ private fun PromptEditorCard(
 private fun StyleAndLanguageCard(
     formState: GeneratorFormState,
     onSelectStyle: (CartoonStyle) -> Unit,
+    onSelectGenre: (StoryGenre) -> Unit,
     onSelectLanguage: (CartoonLanguage) -> Unit
 ) {
     GlassStudioCard(modifier = Modifier.fillMaxWidth()) {
         Text(
-            text = "Cartoon Style",
+            text = "Cartoon Style (2D & 3D)",
             style = MaterialTheme.typography.titleMedium,
             color = MaterialTheme.colorScheme.onBackground
         )
@@ -569,6 +580,39 @@ private fun StyleAndLanguageCard(
                         selected = selected,
                         borderColor = StudioOutline,
                         selectedBorderColor = ElectricViolet
+                    )
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(14.dp))
+        Text(
+            text = "Story Genre",
+            style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.onBackground
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            StoryGenre.entries.forEach { genre ->
+                val selected = formState.storyGenre == genre
+                FilterChip(
+                    selected = selected,
+                    onClick = { onSelectGenre(genre) },
+                    label = { Text(genre.label) },
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = CyanSpark.copy(alpha = 0.24f),
+                        selectedLabelColor = Color.White,
+                        containerColor = StudioSurface,
+                        labelColor = MaterialTheme.colorScheme.onSurfaceVariant
+                    ),
+                    border = FilterChipDefaults.filterChipBorder(
+                        enabled = true,
+                        selected = selected,
+                        borderColor = StudioOutline,
+                        selectedBorderColor = CyanSpark
                     )
                 )
             }
@@ -613,13 +657,80 @@ private fun StyleAndLanguageCard(
 @Composable
 private fun DurationAndVideoSettingsCard(
     formState: GeneratorFormState,
-    onSelectDuration: (VideoDurationOption) -> Unit,
+    onSelectDurationMinutes: (Int) -> Unit,
+    onSelectBgmTrack: (BgmTrackOption) -> Unit,
     onSelectAspectRatio: (VideoAspectRatio) -> Unit,
     onSelectResolution: (VideoResolution) -> Unit
 ) {
     GlassStudioCard(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "Story Duration (1–30 Minutes)",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onBackground
+            )
+            Text(
+                text = "${formState.durationMinutes} min • ${formState.plannedSceneCount} scenes",
+                style = MaterialTheme.typography.labelLarge,
+                color = CyanSpark
+            )
+        }
+        Spacer(modifier = Modifier.height(4.dp))
         Text(
-            text = "Video Duration & Connected Scenes",
+            text = "Maximum 30 minutes (strict limit — final video never exceeds selected minutes).",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Slider(
+            value = formState.durationMinutes.toFloat(),
+            onValueChange = { onSelectDurationMinutes(it.toInt().coerceIn(1, 30)) },
+            valueRange = 1f..30f,
+            steps = 28,
+            colors = SliderDefaults.colors(
+                thumbColor = CyanSpark,
+                activeTrackColor = ElectricViolet,
+                inactiveTrackColor = StudioOutline
+            ),
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag("studio_duration_slider")
+        )
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            listOf(1, 2, 5, 10, 15, 20, 30).forEach { mins ->
+                val selected = formState.durationMinutes == mins
+                FilterChip(
+                    selected = selected,
+                    onClick = { onSelectDurationMinutes(mins) },
+                    label = {
+                        val scenes = VideoDurationOption.sceneCountForMinutes(mins)
+                        Text(if (mins == 30) "30m Max ($scenes scenes)" else "${mins}m ($scenes scenes)")
+                    },
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = ElectricViolet.copy(alpha = 0.28f),
+                        selectedLabelColor = Color.White,
+                        containerColor = StudioSurface,
+                        labelColor = MaterialTheme.colorScheme.onSurfaceVariant
+                    ),
+                    border = FilterChipDefaults.filterChipBorder(
+                        enabled = true,
+                        selected = selected,
+                        borderColor = StudioOutline,
+                        selectedBorderColor = ElectricViolet
+                    )
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(14.dp))
+        Text(
+            text = "Custom Background Music",
             style = MaterialTheme.typography.titleMedium,
             color = MaterialTheme.colorScheme.onBackground
         )
@@ -628,12 +739,12 @@ private fun DurationAndVideoSettingsCard(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-            VideoDurationOption.entries.forEach { dur ->
-                val selected = formState.duration == dur
+            BgmTrackOption.entries.forEach { track ->
+                val selected = formState.bgmTrack == track
                 FilterChip(
                     selected = selected,
-                    onClick = { onSelectDuration(dur) },
-                    label = { Text("${dur.label} (${dur.sceneCount} scenes)") },
+                    onClick = { onSelectBgmTrack(track) },
+                    label = { Text(track.label) },
                     colors = FilterChipDefaults.filterChipColors(
                         selectedContainerColor = ElectricViolet.copy(alpha = 0.28f),
                         selectedLabelColor = Color.White,
@@ -784,7 +895,7 @@ private fun GenerateActionAndPipelineCard(
                     color = SuccessMint
                 )
                 Text(
-                    text = "${formState.style.label} • ${formState.duration.sceneCount} AI scenes • ${formState.resolution.label}",
+                    text = "${formState.style.label} • ${formState.durationMinutes} min (${formState.plannedSceneCount} scenes) • ${formState.resolution.label}",
                     style = MaterialTheme.typography.titleSmall,
                     color = CyanSpark
                 )
@@ -917,7 +1028,7 @@ private fun GenerateActionAndPipelineCard(
                             ) {
                                 Icon(Icons.Filled.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
                                 Spacer(modifier = Modifier.width(6.dp))
-                                Text(stringResource(R.string.btn_retry_generation))
+                                Text(stringResource(R.string.btn_resume_generation))
                             }
                         }
                     }

@@ -346,6 +346,7 @@ fun CartoonAiStudioApp(
                                     completedProject = homeProject,
                                     onPromptChange = viewModel::updatePrompt,
                                     onClearPrompt = viewModel::clearPrompt,
+                                    onSelectDurationMinutes = viewModel::selectDurationMinutes,
                                     onGenerateCartoon = { viewModel.generateCartoonMovie() },
                                     onRetryGeneration = { viewModel.retryFailedGeneration() },
                                     onCancelGeneration = viewModel::cancelGeneration,
@@ -389,7 +390,9 @@ fun CartoonAiStudioApp(
                                     onGenerateStory = viewModel::generateAiStoryIdea,
                                     onApplyCategoryTheme = viewModel::applyQuickTheme,
                                     onSelectStyle = viewModel::selectStyle,
-                                    onSelectDuration = viewModel::selectDuration,
+                                    onSelectGenre = viewModel::selectGenre,
+                                    onSelectDurationMinutes = viewModel::selectDurationMinutes,
+                                    onSelectBgmTrack = viewModel::selectBgmTrack,
                                     onSelectLanguage = viewModel::selectLanguage,
                                     onSelectAspectRatio = viewModel::selectAspectRatio,
                                     onSelectResolution = viewModel::selectResolution,
@@ -436,6 +439,11 @@ fun CartoonAiStudioApp(
                                     characters = characters,
                                     history = history,
                                     onOpenProject = { proj -> openPlayer(proj.id) },
+                                    onResumeProject = { proj ->
+                                        viewModel.resumeFailedProject(proj) { newPid ->
+                                            openPlayer(newPid)
+                                        }
+                                    },
                                     onDeleteProject = viewModel::deleteProject,
                                     onDeleteHistoryEntry = viewModel::deleteHistoryEntry,
                                     onClearHistory = viewModel::clearAllHistory,
@@ -464,6 +472,11 @@ fun CartoonAiStudioApp(
                                     defaultMovieNumber = projectNumber,
                                     onBack = { navController.popBackStack() },
                                     onSaveToMyProjects = viewModel::saveProjectToMyProjects,
+                                    onResumeProject = { proj ->
+                                        viewModel.resumeFailedProject(proj) { newPid ->
+                                            openPlayer(newPid)
+                                        }
+                                    },
                                     onRegenerateCartoon = { proj ->
                                         viewModel.regenerateCartoon(proj) { newPid ->
                                             openPlayer(newPid)

@@ -55,6 +55,7 @@ import com.example.data.model.CartoonLanguage
 import com.example.data.model.CartoonProject
 import com.example.data.model.CartoonStyle
 import com.example.data.model.GenerationPipelineState
+import com.example.data.model.ProjectStatus
 import com.example.data.model.SceneRecord
 import com.example.data.model.VideoResolution
 import com.example.ui.components.Base64OrPathImage
@@ -63,8 +64,10 @@ import com.example.ui.components.VideoPlayerAndDownloadCard
 import com.example.ui.theme.CyanSpark
 import com.example.ui.theme.ElectricBlue
 import com.example.ui.theme.ElectricViolet
+import com.example.ui.theme.ErrorCoral
 import com.example.ui.theme.StudioSurfaceCard
 import com.example.ui.theme.SuccessMint
+import com.example.ui.theme.WarningAmber
 
 @Composable
 fun VideoPlayerScreen(
@@ -74,6 +77,7 @@ fun VideoPlayerScreen(
     defaultMovieNumber: Int = 1,
     onBack: () -> Unit,
     onSaveToMyProjects: (CartoonProject) -> Unit,
+    onResumeProject: (CartoonProject) -> Unit = {},
     onRegenerateCartoon: (CartoonProject) -> Unit,
     onRegenerateScene: (CartoonProject, SceneRecord, List<SceneRecord>) -> Unit,
     onEditStoryAndRegenerate: (CartoonProject, String, String) -> Unit,
@@ -132,6 +136,44 @@ fun VideoPlayerScreen(
                             style = MaterialTheme.typography.bodySmall,
                             color = CyanSpark
                         )
+                    }
+                }
+            }
+
+            if (project.status == ProjectStatus.FAILED.key && !pipelineState.isRunning) {
+                item {
+                    GlassStudioCard(highlighted = true, modifier = Modifier.fillMaxWidth()) {
+                        Text(
+                            text = "Incomplete Generation (${project.completedScenes}/${project.sceneCount} scenes saved)",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = WarningAmber
+                        )
+                        if (!project.errorMessage.isNullOrBlank()) {
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = project.errorMessage,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = ErrorCoral
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Button(
+                            onClick = { onResumeProject(project) },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = WarningAmber,
+                                contentColor = Color(0xFF0A0817)
+                            ),
+                            shape = RoundedCornerShape(14.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .minimumInteractiveComponentSize()
+                                .testTag("player_resume_button")
+                        ) {
+                            Icon(Icons.Filled.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(stringResource(R.string.btn_resume_generation), fontWeight = FontWeight.Bold)
+                        }
                     }
                 }
             }

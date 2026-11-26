@@ -56,16 +56,22 @@ class VoiceAndAudioEngine(private val context: Context) {
         moodMusic: MoodMusic,
         sfxCue: SfxCue,
         targetMinSeconds: Int,
-        characterPitches: Map<String, Float>
+        characterPitches: Map<String, Float>,
+        exactDurationSec: Float? = null,
+        bgmOverride: MoodMusic? = null
     ): SynthesizedSceneAudio = withContext(Dispatchers.IO) {
         val tts = initTextToSpeech(language)
         val tempDir = File(context.cacheDir, "tts_tmp").apply { mkdirs() }
 
+        val strictBudgetSec = exactDurationSec?.coerceIn(2f, 600f)
         val dialogueSegments = mutableListOf<Pair<DialogueTiming, ShortArray>>()
-        var cursorSec = 0.4f
+        var cursorSec = 0.35f
 
         try {
             for ((idx, dlg) in dialogues.withIndex()) {
+                if (strictBudgetSec != null && cursorSec >= strictBudgetSec - 0.5f) {
+                    break
+                }
                 val wavFile = File(tempDir, "scene_${sceneIndex}_dlg_${idx}.wav")
                 val customPitch = characterPitches.entries
                     .firstOrNull { it.key.equals(dlg.speaker, ignoreCase = true) }?.value
@@ -84,8 +90,20 @@ class VoiceAndAudioEngine(private val context: Context) {
                 }
                 wavFile.delete()
 
-                val segDurSec = (rawSamples.size.toFloat() / TARGET_SAMPLE_RATE)
-                    .coerceAtLeast(dlg.durationSec.toFloat().coerceAtLeast(2.5f))
+                val naturalDurSec = (rawSamples.size.toFloat() / TARGET_SAMPLE_RATE)
+                    .coerceAtLeast(dlg.durationSec.toFloat().coerceAtLeast(2.0f))
+                val maxAllowedDur = if (strictBudgetSec != null) {
+                    (strictBudgetSec - cursorSec - 0.25f).coerceAtLeast(0.5f)
+                } else {
+                    naturalDurSec
+                }
+                val segDurSec = min(naturalDurSec, maxAllowedDur)
+                val maxAllowedSamples = (segDurSec * TARGET_SAMPLE_RATE).toInt().coerceAtLeast(1)
+                val trimmedSamples = if (rawSamples.size > maxAllowedSamples) {
+                    rawSamples.copyOf(maxAllowedSamples)
+                } else {
+                    rawSamples
+                }
 
                 dialogueSegments.add(
                     DialogueTiming(
@@ -94,21 +112,21 @@ class VoiceAndAudioEngine(private val context: Context) {
                         line = dlg.line,
                         startSec = cursorSec,
                         endSec = cursorSec + segDurSec
-                    ) to rawSamples
+                    ) to trimmedSamples
                 )
-                cursorSec += segDurSec + 0.45f
+                cursorSec += segDurSec + 0.4f
             }
         } finally {
             tts?.stop()
             tts?.shutdown()
         }
 
-        val totalDurationSec = maxOf(cursorSec + 0.4f, targetMinSeconds.toFloat())
+        val totalDurationSec = strictBudgetSec ?: maxOf(cursorSec + 0.4f, targetMinSeconds.toFloat())
         val totalSamples = (totalDurationSec * TARGET_SAMPLE_RATE).toInt().coerceAtLeast(TARGET_SAMPLE_RATE)
         val mixed = FloatArray(totalSamples)
 
-        // 1. Add procedural cartoon background music
-        val bgm = generateCartoonBgm(moodMusic, totalSamples, TARGET_SAMPLE_RATE)
+        // 1. Add procedural cartoon background music (custom soundtrack override or per-scene mood)
+        val bgm = generateCartoonBgm(bgmOverride ?: moodMusic, totalSamples, TARGET_SAMPLE_RATE)
         for (i in 0 until totalSamples) {
             mixed[i] += bgm[i] * 0.22f
         }
@@ -151,10 +169,17 @@ class VoiceAndAudioEngine(private val context: Context) {
                     }
                     lipEnvelope[f] = (peak * 2.4f).coerceIn(0.08f, 1.0f)
                 } else {
-                    // Gentle cadence pulse if audio ended slightly before duration
                     lipEnvelope[f] = if (f % 4 < 2) 0.45f else 0.15f
                 }
             }
+        }
+
+        // Smooth 0.12s fade-out on the scene boundary so transitions never click
+        val fadeSamples = min((TARGET_SAMPLE_RATE * 0.12f).toInt(), totalSamples / 4)
+        for (i in 0 until fadeSamples) {
+            val pos = totalSamples - 1 - i
+            val factor = i.toFloat() / fadeSamples.coerceAtLeast(1)
+            mixed[pos] *= factor
         }
 
         val finalPcm = ShortArray(totalSamples) { i ->
@@ -287,8 +312,17 @@ class VoiceAndAudioEngine(private val context: Context) {
             MoodMusic.MYSTERY -> floatArrayOf(196.00f, 233.08f, 293.66f, 349.23f)
             MoodMusic.EPIC -> floatArrayOf(174.61f, 220.00f, 261.63f, 349.23f)
             MoodMusic.COMEDY -> floatArrayOf(293.66f, 369.99f, 440.00f, 587.33f)
+            MoodMusic.EMOTIONAL -> floatArrayOf(261.63f, 293.66f, 329.63f, 392.00f)
+            MoodMusic.SPOOKY -> floatArrayOf(146.83f, 155.56f, 207.65f, 220.00f)
+            MoodMusic.UPBEAT_KIDS -> floatArrayOf(329.63f, 392.00f, 440.00f, 659.25f)
         }
-        val beatSamples = (sampleRate * 0.45f).toInt()
+        val beatSec = when (mood) {
+            MoodMusic.EMOTIONAL -> 0.65f
+            MoodMusic.SPOOKY -> 0.58f
+            MoodMusic.UPBEAT_KIDS, MoodMusic.COMEDY -> 0.34f
+            else -> 0.45f
+        }
+        val beatSamples = (sampleRate * beatSec).toInt().coerceAtLeast(1)
         for (i in 0 until sampleCount) {
             val t = i.toFloat() / sampleRate
             val noteIdx = (i / beatSamples) % freqs.size

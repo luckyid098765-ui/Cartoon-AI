@@ -31,11 +31,11 @@ service cloud.firestore {
     }
 
     function isValidDurationOption(val) {
-      return val in ['SEC_10', 'SEC_30', 'MIN_1', 'MIN_2', 'MIN_5', 'MIN_10', 'EXTENDED'];
+      return val in ['SEC_10', 'SEC_30', 'MIN_1', 'MIN_2', 'MIN_5', 'MIN_10', 'MIN_15', 'MIN_20', 'MIN_25', 'MIN_30', 'CUSTOM_MINUTES', 'EXTENDED'];
     }
 
     function isValidLanguage(val) {
-      return val in ['ENGLISH', 'HINDI', 'BENGALI'];
+      return val in ['ENGLISH', 'HINDI', 'BENGALI', 'SPANISH', 'FRENCH', 'ARABIC', 'TAMIL', 'JAPANESE'];
     }
 
     function isValidAspectRatio(val) {
@@ -93,7 +93,7 @@ service cloud.firestore {
              data.title is string && data.title.size() >= 1 && data.title.size() <= 120 &&
              data.visualPrompt is string && data.visualPrompt.size() >= 1 && data.visualPrompt.size() <= 2000 &&
              data.cameraMotion in ['PAN_LEFT', 'PAN_RIGHT', 'ZOOM_IN', 'ZOOM_OUT', 'STATIC'] &&
-             data.moodMusic in ['PLAYFUL', 'ADVENTURE', 'MYSTERY', 'EPIC', 'COMEDY'] &&
+             data.moodMusic in ['PLAYFUL', 'ADVENTURE', 'MYSTERY', 'EPIC', 'COMEDY', 'EMOTIONAL', 'SPOOKY', 'UPBEAT_KIDS'] &&
              data.sfxCue in ['WHOOSH', 'SPARKLE', 'POP', 'THUNDER', 'FOOTSTEPS', 'NONE'] &&
              data.characterNames is list && data.characterNames.size() <= 10 &&
              (data.characterNames.size() == 0 || data.characterNames[0] is string) &&
