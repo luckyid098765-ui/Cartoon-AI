@@ -1,0 +1,137 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "User account profile, preferences, and generation credits.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "Firebase Auth UID" },
+        "displayName": { "type": "string" },
+        "email": { "type": "string" },
+        "photoUrl": { "type": "string" },
+        "creditsRemaining": { "type": "integer" },
+        "totalVideosGenerated": { "type": "integer" },
+        "totalScenesRendered": { "type": "integer" },
+        "preferredStyle": { "type": "string" },
+        "preferredLanguage": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp (FieldValue.serverTimestamp())" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Server timestamp (FieldValue.serverTimestamp())" }
+      },
+      "required": ["userId", "displayName", "creditsRemaining", "totalVideosGenerated", "totalScenesRendered", "createdAt", "updatedAt"]
+    },
+    "CartoonProject": {
+      "title": "CartoonProject",
+      "description": "A generated or in-progress AI cartoon movie project.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "title": { "type": "string" },
+        "prompt": { "type": "string" },
+        "style": { "type": "string", "enum": ["2D_CARTOON", "3D_CARTOON", "ANIME", "COMIC", "FANTASY", "FUNNY", "ADVENTURE", "CINEMATIC"] },
+        "durationOption": { "type": "string", "enum": ["SEC_30", "MIN_1", "MIN_5", "MIN_10", "EXTENDED"] },
+        "language": { "type": "string", "enum": ["ENGLISH", "HINDI", "BENGALI"] },
+        "aspectRatio": { "type": "string", "enum": ["RATIO_16_9", "RATIO_9_16", "RATIO_1_1"] },
+        "resolution": { "type": "string", "enum": ["RES_720P", "RES_1080P", "RES_4K"] },
+        "status": { "type": "string", "enum": ["DRAFT", "QUEUED", "GENERATING", "COMPLETED", "FAILED"] },
+        "progressPercent": { "type": "integer" },
+        "sceneCount": { "type": "integer" },
+        "completedScenes": { "type": "integer" },
+        "durationSeconds": { "type": "integer" },
+        "scriptSummary": { "type": "string" },
+        "localVideoPath": { "type": "string" },
+        "thumbnailBase64": { "type": "string" },
+        "errorMessage": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp (FieldValue.serverTimestamp())" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Server timestamp (FieldValue.serverTimestamp())" }
+      },
+      "required": ["userId", "title", "prompt", "style", "durationOption", "language", "aspectRatio", "resolution", "status", "progressPercent", "sceneCount", "completedScenes", "durationSeconds", "createdAt", "updatedAt"]
+    },
+    "SceneRecord": {
+      "title": "SceneRecord",
+      "description": "Individual scene script, animation cues, dialogues, and render status.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "projectId": { "type": "string" },
+        "sceneIndex": { "type": "integer" },
+        "title": { "type": "string" },
+        "visualPrompt": { "type": "string" },
+        "cameraMotion": { "type": "string", "enum": ["PAN_LEFT", "PAN_RIGHT", "ZOOM_IN", "ZOOM_OUT", "STATIC"] },
+        "moodMusic": { "type": "string", "enum": ["PLAYFUL", "ADVENTURE", "MYSTERY", "EPIC", "COMEDY"] },
+        "sfxCue": { "type": "string", "enum": ["WHOOSH", "SPARKLE", "POP", "THUNDER", "FOOTSTEPS", "NONE"] },
+        "characterNames": { "type": "array" },
+        "dialogues": { "type": "array" },
+        "status": { "type": "string", "enum": ["PENDING", "GENERATING", "COMPLETED", "FAILED"] },
+        "retryCount": { "type": "integer" },
+        "localImagePath": { "type": "string" },
+        "errorMessage": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp (FieldValue.serverTimestamp())" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Server timestamp (FieldValue.serverTimestamp())" }
+      },
+      "required": ["userId", "projectId", "sceneIndex", "title", "visualPrompt", "cameraMotion", "moodMusic", "sfxCue", "characterNames", "dialogues", "status", "retryCount", "createdAt", "updatedAt"]
+    },
+    "SavedCharacter": {
+      "title": "SavedCharacter",
+      "description": "Reusable cartoon character with consistent face, clothes, and voice profile.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "name": { "type": "string" },
+        "role": { "type": "string" },
+        "appearance": { "type": "string" },
+        "outfit": { "type": "string" },
+        "personality": { "type": "string" },
+        "voiceGender": { "type": "string", "enum": ["MALE", "FEMALE"] },
+        "voicePitch": { "type": "number" },
+        "defaultExpression": { "type": "string", "enum": ["HAPPY", "EXCITED", "BRAVE", "FUNNY", "SURPRISED", "CALM"] },
+        "style": { "type": "string", "enum": ["2D_CARTOON", "3D_CARTOON", "ANIME", "COMIC", "FANTASY", "FUNNY", "ADVENTURE", "CINEMATIC"] },
+        "localPortraitPath": { "type": "string" },
+        "portraitBase64": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp (FieldValue.serverTimestamp())" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Server timestamp (FieldValue.serverTimestamp())" }
+      },
+      "required": ["userId", "name", "role", "appearance", "outfit", "voiceGender", "voicePitch", "defaultExpression", "style", "createdAt", "updatedAt"]
+    },
+    "GenerationHistoryEntry": {
+      "title": "GenerationHistoryEntry",
+      "description": "Immutable log entry for cartoon generation runs and credit usage.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "projectId": { "type": "string" },
+        "projectTitle": { "type": "string" },
+        "actionType": { "type": "string", "enum": ["FULL_MOVIE", "SCENE_REGEN", "STORY_DRAFT", "CHARACTER_CREATE"] },
+        "creditsUsed": { "type": "integer" },
+        "status": { "type": "string", "enum": ["COMPLETED", "FAILED"] },
+        "durationLabel": { "type": "string" },
+        "language": { "type": "string" },
+        "style": { "type": "string" },
+        "details": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp (FieldValue.serverTimestamp())" }
+      },
+      "required": ["userId", "projectId", "projectTitle", "actionType", "creditsUsed", "status", "durationLabel", "language", "style", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "User profile and generation credit balance."
+    },
+    "/users/{userId}/projects/{projectId}": {
+      "schema": { "$ref": "#/entities/CartoonProject" },
+      "description": "User's cartoon movie projects."
+    },
+    "/users/{userId}/projects/{projectId}/scenes/{sceneId}": {
+      "schema": { "$ref": "#/entities/SceneRecord" },
+      "description": "Ordered scenes belonging to a cartoon movie project."
+    },
+    "/users/{userId}/characters/{characterId}": {
+      "schema": { "$ref": "#/entities/SavedCharacter" },
+      "description": "User's saved consistent cartoon characters."
+    },
+    "/users/{userId}/generationHistory/{historyId}": {
+      "schema": { "$ref": "#/entities/GenerationHistoryEntry" },
+      "description": "Audit log of generation runs and credit usage."
+    }
+  }
+}

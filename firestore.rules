@@ -1,0 +1,267 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global safety net: deny everything by default
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidStyle(val) {
+      return val in ['2D_CARTOON', '3D_CARTOON', 'ANIME', 'COMIC', 'FANTASY', 'FUNNY', 'ADVENTURE', 'CINEMATIC'];
+    }
+
+    function isValidDurationOption(val) {
+      return val in ['SEC_30', 'MIN_1', 'MIN_5', 'MIN_10', 'EXTENDED'];
+    }
+
+    function isValidLanguage(val) {
+      return val in ['ENGLISH', 'HINDI', 'BENGALI'];
+    }
+
+    function isValidAspectRatio(val) {
+      return val in ['RATIO_16_9', 'RATIO_9_16', 'RATIO_1_1'];
+    }
+
+    function isValidResolution(val) {
+      return val in ['RES_720P', 'RES_1080P', 'RES_4K'];
+    }
+
+    function isValidProjectStatus(val) {
+      return val in ['DRAFT', 'QUEUED', 'GENERATING', 'COMPLETED', 'FAILED'];
+    }
+
+    function isValidSceneStatus(val) {
+      return val in ['PENDING', 'GENERATING', 'COMPLETED', 'FAILED'];
+    }
+
+    function isValidUserProfile(data) {
+      return data.userId is string && data.userId == request.auth.uid &&
+             data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 80 &&
+             data.creditsRemaining is int && data.creditsRemaining >= 0 && data.creditsRemaining <= 500 &&
+             data.totalVideosGenerated is int && data.totalVideosGenerated >= 0 &&
+             data.totalScenesRendered is int && data.totalScenesRendered >= 0 &&
+             (!('email' in data) || (data.email is string && data.email.size() <= 120)) &&
+             (!('photoUrl' in data) || (data.photoUrl is string && data.photoUrl.size() <= 500)) &&
+             (!('preferredStyle' in data) || (data.preferredStyle is string && isValidStyle(data.preferredStyle))) &&
+             (!('preferredLanguage' in data) || (data.preferredLanguage is string && isValidLanguage(data.preferredLanguage)));
+    }
+
+    function isValidCartoonProject(data) {
+      return data.userId is string && data.userId == request.auth.uid &&
+             data.title is string && data.title.size() >= 1 && data.title.size() <= 120 &&
+             data.prompt is string && data.prompt.size() >= 1 && data.prompt.size() <= 4000 &&
+             data.style is string && isValidStyle(data.style) &&
+             data.durationOption is string && isValidDurationOption(data.durationOption) &&
+             data.language is string && isValidLanguage(data.language) &&
+             data.aspectRatio is string && isValidAspectRatio(data.aspectRatio) &&
+             data.resolution is string && isValidResolution(data.resolution) &&
+             data.status is string && isValidProjectStatus(data.status) &&
+             data.progressPercent is int && data.progressPercent >= 0 && data.progressPercent <= 100 &&
+             data.sceneCount is int && data.sceneCount >= 1 && data.sceneCount <= 30 &&
+             data.completedScenes is int && data.completedScenes >= 0 && data.completedScenes <= 30 &&
+             data.durationSeconds is int && data.durationSeconds >= 1 && data.durationSeconds <= 1800 &&
+             (!('scriptSummary' in data) || (data.scriptSummary is string && data.scriptSummary.size() <= 8000)) &&
+             (!('localVideoPath' in data) || (data.localVideoPath is string && data.localVideoPath.size() <= 500)) &&
+             (!('thumbnailBase64' in data) || (data.thumbnailBase64 is string && data.thumbnailBase64.size() <= 150000)) &&
+             (!('errorMessage' in data) || (data.errorMessage is string && data.errorMessage.size() <= 500));
+    }
+
+    function isValidSceneRecord(data) {
+      return data.userId is string && data.userId == request.auth.uid &&
+             data.projectId is string && isValidId(data.projectId) &&
+             data.sceneIndex is int && data.sceneIndex >= 0 && data.sceneIndex <= 30 &&
+             data.title is string && data.title.size() >= 1 && data.title.size() <= 120 &&
+             data.visualPrompt is string && data.visualPrompt.size() >= 1 && data.visualPrompt.size() <= 2000 &&
+             data.cameraMotion in ['PAN_LEFT', 'PAN_RIGHT', 'ZOOM_IN', 'ZOOM_OUT', 'STATIC'] &&
+             data.moodMusic in ['PLAYFUL', 'ADVENTURE', 'MYSTERY', 'EPIC', 'COMEDY'] &&
+             data.sfxCue in ['WHOOSH', 'SPARKLE', 'POP', 'THUNDER', 'FOOTSTEPS', 'NONE'] &&
+             data.characterNames is list && data.characterNames.size() <= 10 &&
+             (data.characterNames.size() == 0 || data.characterNames[0] is string) &&
+             data.dialogues is list && data.dialogues.size() <= 12 &&
+             data.status is string && isValidSceneStatus(data.status) &&
+             data.retryCount is int && data.retryCount >= 0 && data.retryCount <= 10 &&
+             (!('localImagePath' in data) || (data.localImagePath is string && data.localImagePath.size() <= 500)) &&
+             (!('errorMessage' in data) || (data.errorMessage is string && data.errorMessage.size() <= 500));
+    }
+
+    function isValidSavedCharacter(data) {
+      return data.userId is string && data.userId == request.auth.uid &&
+             data.name is string && data.name.size() >= 1 && data.name.size() <= 60 &&
+             data.role is string && data.role.size() >= 1 && data.role.size() <= 80 &&
+             data.appearance is string && data.appearance.size() >= 1 && data.appearance.size() <= 1000 &&
+             data.outfit is string && data.outfit.size() >= 1 && data.outfit.size() <= 500 &&
+             (!('personality' in data) || (data.personality is string && data.personality.size() <= 300)) &&
+             data.voiceGender in ['MALE', 'FEMALE'] &&
+             data.voicePitch is number && data.voicePitch >= 0.5 && data.voicePitch <= 2.0 &&
+             data.defaultExpression in ['HAPPY', 'EXCITED', 'BRAVE', 'FUNNY', 'SURPRISED', 'CALM'] &&
+             data.style is string && isValidStyle(data.style) &&
+             (!('localPortraitPath' in data) || (data.localPortraitPath is string && data.localPortraitPath.size() <= 500)) &&
+             (!('portraitBase64' in data) || (data.portraitBase64 is string && data.portraitBase64.size() <= 150000));
+    }
+
+    function isValidGenerationHistory(data) {
+      return data.userId is string && data.userId == request.auth.uid &&
+             data.projectId is string && data.projectId.size() >= 1 && data.projectId.size() <= 128 &&
+             data.projectTitle is string && data.projectTitle.size() >= 1 && data.projectTitle.size() <= 120 &&
+             data.actionType in ['FULL_MOVIE', 'SCENE_REGEN', 'STORY_DRAFT', 'CHARACTER_CREATE'] &&
+             data.creditsUsed is int && data.creditsUsed >= 0 && data.creditsUsed <= 100 &&
+             data.status in ['COMPLETED', 'FAILED'] &&
+             data.durationLabel is string && data.durationLabel.size() >= 1 && data.durationLabel.size() <= 40 &&
+             data.language is string && data.language.size() >= 1 && data.language.size() <= 30 &&
+             data.style is string && data.style.size() >= 1 && data.style.size() <= 40 &&
+             (!('details' in data) || (data.details is string && data.details.size() <= 300));
+    }
+
+    match /users/{userId} {
+      allow get: if isOwner(userId) && isValidId(userId);
+      allow list: if isOwner(userId);
+
+      allow create: if isOwner(userId) &&
+                       isValidId(userId) &&
+                       incoming().keys().hasAll(['userId', 'displayName', 'creditsRemaining', 'totalVideosGenerated', 'totalScenesRendered', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['userId', 'displayName', 'email', 'photoUrl', 'creditsRemaining', 'totalVideosGenerated', 'totalScenesRendered', 'preferredStyle', 'preferredLanguage', 'createdAt', 'updatedAt']) &&
+                       incoming().creditsRemaining == 50 &&
+                       incoming().totalVideosGenerated == 0 &&
+                       incoming().totalScenesRendered == 0 &&
+                       incoming().createdAt is timestamp && incoming().createdAt <= request.time &&
+                       incoming().updatedAt is timestamp && incoming().updatedAt <= request.time &&
+                       isValidUserProfile(incoming());
+
+      allow update: if isOwner(userId) &&
+                       isValidId(userId) &&
+                       isValidUserProfile(incoming()) &&
+                       incoming().userId == existing().userId &&
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().updatedAt is timestamp && incoming().updatedAt <= request.time &&
+                       (
+                         incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'email', 'photoUrl', 'preferredStyle', 'preferredLanguage', 'updatedAt']) ||
+                         (
+                           incoming().creditsRemaining <= existing().creditsRemaining &&
+                           incoming().totalVideosGenerated >= existing().totalVideosGenerated &&
+                           incoming().totalScenesRendered >= existing().totalScenesRendered &&
+                           incoming().diff(existing()).affectedKeys().hasOnly(['creditsRemaining', 'totalVideosGenerated', 'totalScenesRendered', 'updatedAt'])
+                         ) ||
+                         (
+                           existing().creditsRemaining < 10 &&
+                           incoming().creditsRemaining <= 50 &&
+                           incoming().creditsRemaining >= existing().creditsRemaining &&
+                           incoming().diff(existing()).affectedKeys().hasOnly(['creditsRemaining', 'updatedAt'])
+                         )
+                       );
+
+      allow delete: if isOwner(userId) && isValidId(userId);
+
+      match /projects/{projectId} {
+        allow get: if isOwner(userId) && isValidId(projectId);
+        allow list: if isOwner(userId);
+
+        allow create: if isOwner(userId) &&
+                         isValidId(projectId) &&
+                         incoming().keys().hasAll(['userId', 'title', 'prompt', 'style', 'durationOption', 'language', 'aspectRatio', 'resolution', 'status', 'progressPercent', 'sceneCount', 'completedScenes', 'durationSeconds', 'createdAt', 'updatedAt']) &&
+                         incoming().keys().hasOnly(['userId', 'title', 'prompt', 'style', 'durationOption', 'language', 'aspectRatio', 'resolution', 'status', 'progressPercent', 'sceneCount', 'completedScenes', 'durationSeconds', 'scriptSummary', 'localVideoPath', 'thumbnailBase64', 'errorMessage', 'createdAt', 'updatedAt']) &&
+                         incoming().createdAt is timestamp && incoming().createdAt <= request.time &&
+                         incoming().updatedAt is timestamp && incoming().updatedAt <= request.time &&
+                         isValidCartoonProject(incoming());
+
+        allow update: if isOwner(userId) &&
+                         isValidId(projectId) &&
+                         isValidCartoonProject(incoming()) &&
+                         incoming().userId == existing().userId &&
+                         incoming().createdAt == existing().createdAt &&
+                         incoming().updatedAt is timestamp && incoming().updatedAt <= request.time &&
+                         (
+                           incoming().diff(existing()).affectedKeys().hasOnly(['status', 'progressPercent', 'sceneCount', 'completedScenes', 'durationSeconds', 'scriptSummary', 'localVideoPath', 'thumbnailBase64', 'errorMessage', 'updatedAt']) ||
+                           incoming().diff(existing()).affectedKeys().hasOnly(['title', 'prompt', 'style', 'durationOption', 'language', 'aspectRatio', 'resolution', 'status', 'progressPercent', 'sceneCount', 'completedScenes', 'durationSeconds', 'scriptSummary', 'localVideoPath', 'thumbnailBase64', 'errorMessage', 'updatedAt'])
+                         );
+
+        allow delete: if isOwner(userId) && isValidId(projectId);
+
+        match /scenes/{sceneId} {
+          allow get: if isOwner(userId) && isValidId(projectId) && isValidId(sceneId);
+          allow list: if isOwner(userId) && isValidId(projectId);
+
+          allow create: if isOwner(userId) &&
+                           isValidId(projectId) &&
+                           isValidId(sceneId) &&
+                           incoming().projectId == projectId &&
+                           incoming().keys().hasAll(['userId', 'projectId', 'sceneIndex', 'title', 'visualPrompt', 'cameraMotion', 'moodMusic', 'sfxCue', 'characterNames', 'dialogues', 'status', 'retryCount', 'createdAt', 'updatedAt']) &&
+                           incoming().keys().hasOnly(['userId', 'projectId', 'sceneIndex', 'title', 'visualPrompt', 'cameraMotion', 'moodMusic', 'sfxCue', 'characterNames', 'dialogues', 'status', 'retryCount', 'localImagePath', 'errorMessage', 'createdAt', 'updatedAt']) &&
+                           incoming().createdAt is timestamp && incoming().createdAt <= request.time &&
+                           incoming().updatedAt is timestamp && incoming().updatedAt <= request.time &&
+                           isValidSceneRecord(incoming()) &&
+                           existsAfter(/databases/$(database)/documents/users/$(userId)/projects/$(projectId));
+
+          allow update: if isOwner(userId) &&
+                           isValidId(projectId) &&
+                           isValidId(sceneId) &&
+                           isValidSceneRecord(incoming()) &&
+                           incoming().userId == existing().userId &&
+                           incoming().projectId == existing().projectId &&
+                           incoming().createdAt == existing().createdAt &&
+                           incoming().updatedAt is timestamp && incoming().updatedAt <= request.time &&
+                           incoming().diff(existing()).affectedKeys().hasOnly(['title', 'visualPrompt', 'cameraMotion', 'moodMusic', 'sfxCue', 'characterNames', 'dialogues', 'status', 'retryCount', 'localImagePath', 'errorMessage', 'updatedAt']);
+
+          allow delete: if isOwner(userId) && isValidId(projectId) && isValidId(sceneId);
+        }
+      }
+
+      match /characters/{characterId} {
+        allow get: if isOwner(userId) && isValidId(characterId);
+        allow list: if isOwner(userId);
+
+        allow create: if isOwner(userId) &&
+                         isValidId(characterId) &&
+                         incoming().keys().hasAll(['userId', 'name', 'role', 'appearance', 'outfit', 'voiceGender', 'voicePitch', 'defaultExpression', 'style', 'createdAt', 'updatedAt']) &&
+                         incoming().keys().hasOnly(['userId', 'name', 'role', 'appearance', 'outfit', 'personality', 'voiceGender', 'voicePitch', 'defaultExpression', 'style', 'localPortraitPath', 'portraitBase64', 'createdAt', 'updatedAt']) &&
+                         incoming().createdAt is timestamp && incoming().createdAt <= request.time &&
+                         incoming().updatedAt is timestamp && incoming().updatedAt <= request.time &&
+                         isValidSavedCharacter(incoming());
+
+        allow update: if isOwner(userId) &&
+                         isValidId(characterId) &&
+                         isValidSavedCharacter(incoming()) &&
+                         incoming().userId == existing().userId &&
+                         incoming().createdAt == existing().createdAt &&
+                         incoming().updatedAt is timestamp && incoming().updatedAt <= request.time &&
+                         incoming().diff(existing()).affectedKeys().hasOnly(['name', 'role', 'appearance', 'outfit', 'personality', 'voiceGender', 'voicePitch', 'defaultExpression', 'style', 'localPortraitPath', 'portraitBase64', 'updatedAt']);
+
+        allow delete: if isOwner(userId) && isValidId(characterId);
+      }
+
+      match /generationHistory/{historyId} {
+        allow get: if isOwner(userId) && isValidId(historyId);
+        allow list: if isOwner(userId);
+
+        allow create: if isOwner(userId) &&
+                         isValidId(historyId) &&
+                         incoming().keys().hasAll(['userId', 'projectId', 'projectTitle', 'actionType', 'creditsUsed', 'status', 'durationLabel', 'language', 'style', 'createdAt']) &&
+                         incoming().keys().hasOnly(['userId', 'projectId', 'projectTitle', 'actionType', 'creditsUsed', 'status', 'durationLabel', 'language', 'style', 'details', 'createdAt']) &&
+                         incoming().createdAt is timestamp && incoming().createdAt <= request.time &&
+                         isValidGenerationHistory(incoming());
+
+        allow update: if false;
+        allow delete: if isOwner(userId) && isValidId(historyId);
+      }
+    }
+  }
+}

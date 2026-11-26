@@ -1,0 +1,26 @@
+<resources>
+    <string name="app_name">Cartoon AI</string>
+    <string name="brand_title">CARTOON AI</string>
+    <string name="brand_subtitle">AI Cartoon Movie Studio</string>
+    <string name="prompt_placeholder">Paste your cartoon story or describe the cartoon you want to create...</string>
+    <string name="btn_generate_cartoon">Generate Cartoon</string>
+    <string name="btn_clear_prompt">Clear Prompt</string>
+    <string name="btn_random_story">Random Story</string>
+    <string name="btn_generate_story">Generate Story</string>
+    <string name="btn_sign_in_google">Sign in with Google</string>
+    <string name="btn_download_mp4">Download Video</string>
+    <string name="btn_retry_download">Retry Download</string>
+    <string name="btn_save_to_projects">Save to My Projects</string>
+    <string name="btn_saved_to_projects">Saved in My Projects</string>
+    <string name="btn_regenerate_cartoon">Regenerate Cartoon</string>
+    <string name="btn_regenerate_scene">Regenerate Scene</string>
+    <string name="btn_edit_story">Edit Story</string>
+    <string name="download_complete_title">Download Complete</string>
+    <string name="projects_gallery_title">Cartoon Gallery</string>
+    <string name="view_mode_gallery">Gallery</string>
+    <string name="view_mode_list">List</string>
+    <string name="nav_home">Home</string>
+    <string name="nav_create">Studio</string>
+    <string name="nav_characters">Characters</string>
+    <string name="nav_projects">Projects</string>
+</resources>

@@ -1,0 +1,6 @@
+{
+  "name": "Cartoon AI",
+  "description": "AI-powered cartoon movie generator that turns stories into multi-scene animated cartoons with consistent characters, multilingual AI voices, and MP4 export.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
