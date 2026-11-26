@@ -3,7 +3,6 @@ package com.example.ui.screens
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -20,17 +19,25 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AllInclusive
 import androidx.compose.material.icons.filled.AutoFixHigh
 import androidx.compose.material.icons.filled.Cancel
 import androidx.compose.material.icons.filled.Casino
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Clear
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.Face
-import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.OpenInNew
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
@@ -43,20 +50,23 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.R
 import com.example.data.model.CartoonLanguage
+import com.example.data.model.CartoonProject
 import com.example.data.model.CartoonStyle
 import com.example.data.model.GenerationPipelineState
 import com.example.data.model.PipelinePhase
@@ -67,27 +77,68 @@ import com.example.data.model.VideoDurationOption
 import com.example.data.model.VideoResolution
 import com.example.ui.components.GlassStudioCard
 import com.example.ui.components.GradientPrimaryButton
+import com.example.ui.components.VideoPlayerAndDownloadCard
 import com.example.ui.theme.CyanSpark
 import com.example.ui.theme.ElectricBlue
 import com.example.ui.theme.ElectricViolet
 import com.example.ui.theme.ErrorCoral
 import com.example.ui.theme.StudioOutline
 import com.example.ui.theme.StudioSurface
-import com.example.ui.theme.StudioSurfaceCard
 import com.example.ui.theme.SuccessMint
-import com.example.ui.theme.WarningAmber
 import com.example.ui.viewmodel.GeneratorFormState
+
+private data class CartoonCategoryShortcut(
+    val label: String,
+    val style: CartoonStyle,
+    val starterPrompt: String
+)
+
+private val categoryShortcuts = listOf(
+    CartoonCategoryShortcut(
+        label = "Funny Cartoons",
+        style = CartoonStyle.FUNNY,
+        starterPrompt = "A clumsy penguin chef tries to bake a giant rainbow birthday cake in an icy kitchen while two mischievous seals keep sneaking bites."
+    ),
+    CartoonCategoryShortcut(
+        label = "3D Cartoons",
+        style = CartoonStyle.CARTOON_3D,
+        starterPrompt = "A tiny glowing star-sprite and a brave cardboard robot cross a neon toy city at midnight to find the missing music box key."
+    ),
+    CartoonCategoryShortcut(
+        label = "Animated Stories",
+        style = CartoonStyle.CINEMATIC,
+        starterPrompt = "Two siblings sail a paper lantern boat across a starry cloud sea to reunite a lost baby comet with its constellation family."
+    ),
+    CartoonCategoryShortcut(
+        label = "Kids Cartoons",
+        style = CartoonStyle.CARTOON_2D,
+        starterPrompt = "Sunny the singing school bus takes a class of cheerful animal friends on a magical rainbow trip to visit the friendly moon."
+    ),
+    CartoonCategoryShortcut(
+        label = "Animal Cartoons",
+        style = CartoonStyle.ADVENTURE,
+        starterPrompt = "A clever red fox and a giant gentle bear follow an ancient acorn map through emerald canyon waterfalls to find the Golden Treehouse."
+    ),
+    CartoonCategoryShortcut(
+        label = "Fantasy Cartoons",
+        style = CartoonStyle.FANTASY,
+        starterPrompt = "A young apprentice wizard with a glowing crystal owl brews a potion of dancing fireflies to wake the sleeping crystal forest."
+    )
+)
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun GeneratorStudioScreen(
     formState: GeneratorFormState,
     pipelineState: GenerationPipelineState,
+    completedProject: CartoonProject?,
+    totalProjectsCount: Int,
     savedCharacters: List<SavedCharacter>,
     onPromptChange: (String) -> Unit,
     onClearPrompt: () -> Unit,
     onRandomStory: () -> Unit,
     onGenerateStory: () -> Unit,
+    onApplyCategoryTheme: (CartoonStyle, String) -> Unit,
     onSelectStyle: (CartoonStyle) -> Unit,
     onSelectDuration: (VideoDurationOption) -> Unit,
     onSelectLanguage: (CartoonLanguage) -> Unit,
@@ -95,13 +146,28 @@ fun GeneratorStudioScreen(
     onSelectResolution: (VideoResolution) -> Unit,
     onToggleCharacter: (String) -> Unit,
     onGenerateCartoon: () -> Unit,
+    onRetryGeneration: () -> Unit,
+    onRegenerateProject: (CartoonProject) -> Unit,
     onCancelGeneration: () -> Unit,
-    onOpenVideoPlayer: (String) -> Unit
+    onOpenVideoPlayer: (String) -> Unit,
+    onVideoDownloaded: (CartoonProject, com.example.media.VideoDownloadResult) -> Unit = { _, _ -> },
+    onShowMessage: (String) -> Unit
 ) {
+    val listState = rememberLazyListState()
+
+    // Scroll to the generated video player section right below when rendering finishes
+    LaunchedEffect(pipelineState.phase, completedProject?.localVideoPath) {
+        if (pipelineState.phase == PipelinePhase.COMPLETED && completedProject?.localVideoPath != null) {
+            val lastIndex = (listState.layoutInfo.totalItemsCount - 2).coerceAtLeast(0)
+            listState.animateScrollToItem(lastIndex)
+        }
+    }
+
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         val isWide = maxWidth >= 860.dp
 
         LazyColumn(
+            state = listState,
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
@@ -109,15 +175,43 @@ fun GeneratorStudioScreen(
             item {
                 Column {
                     Text(
-                        text = "AI Cartoon Generator",
+                        text = "AI Cartoon Video Generator",
                         style = MaterialTheme.typography.headlineMedium,
                         color = MaterialTheme.colorScheme.onBackground
                     )
                     Text(
-                        text = "Write or generate a story, choose style, duration, language & video format.",
+                        text = "Paste any cartoon prompt and generate unlimited animated MP4 videos — no login or quota limits.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                }
+            }
+
+            // Quick category pills: Funny, 3D, Animated Stories, Kids, Animal, Fantasy
+            item {
+                LazyRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    items(categoryShortcuts, key = { it.label }) { shortcut ->
+                        val active = formState.style == shortcut.style
+                        FilterChip(
+                            selected = active,
+                            onClick = { onApplyCategoryTheme(shortcut.style, shortcut.starterPrompt) },
+                            label = { Text(shortcut.label) },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = ElectricViolet.copy(alpha = 0.34f),
+                                selectedLabelColor = Color.White,
+                                containerColor = StudioSurface,
+                                labelColor = MaterialTheme.colorScheme.onSurfaceVariant
+                            ),
+                            border = FilterChipDefaults.filterChipBorder(
+                                enabled = true,
+                                selected = active,
+                                borderColor = StudioOutline,
+                                selectedBorderColor = CyanSpark
+                            )
+                        )
+                    }
                 }
             }
 
@@ -137,7 +231,8 @@ fun GeneratorStudioScreen(
                                 onPromptChange = onPromptChange,
                                 onClearPrompt = onClearPrompt,
                                 onRandomStory = onRandomStory,
-                                onGenerateStory = onGenerateStory
+                                onGenerateStory = onGenerateStory,
+                                onShowMessage = onShowMessage
                             )
                             StyleAndLanguageCard(
                                 formState = formState,
@@ -155,17 +250,19 @@ fun GeneratorStudioScreen(
                                 onSelectAspectRatio = onSelectAspectRatio,
                                 onSelectResolution = onSelectResolution
                             )
-                            CastConsistencyCard(
-                                savedCharacters = savedCharacters,
-                                selectedIds = formState.selectedCharacterIds,
-                                onToggleCharacter = onToggleCharacter
-                            )
+                            if (savedCharacters.isNotEmpty()) {
+                                CastConsistencyCard(
+                                    savedCharacters = savedCharacters,
+                                    selectedIds = formState.selectedCharacterIds,
+                                    onToggleCharacter = onToggleCharacter
+                                )
+                            }
                             GenerateActionAndPipelineCard(
                                 formState = formState,
                                 pipelineState = pipelineState,
                                 onGenerateCartoon = onGenerateCartoon,
-                                onCancelGeneration = onCancelGeneration,
-                                onOpenVideoPlayer = onOpenVideoPlayer
+                                onRetryGeneration = onRetryGeneration,
+                                onCancelGeneration = onCancelGeneration
                             )
                         }
                     }
@@ -177,7 +274,17 @@ fun GeneratorStudioScreen(
                         onPromptChange = onPromptChange,
                         onClearPrompt = onClearPrompt,
                         onRandomStory = onRandomStory,
-                        onGenerateStory = onGenerateStory
+                        onGenerateStory = onGenerateStory,
+                        onShowMessage = onShowMessage
+                    )
+                }
+                item {
+                    GenerateActionAndPipelineCard(
+                        formState = formState,
+                        pipelineState = pipelineState,
+                        onGenerateCartoon = onGenerateCartoon,
+                        onRetryGeneration = onRetryGeneration,
+                        onCancelGeneration = onCancelGeneration
                     )
                 }
                 item {
@@ -204,14 +311,61 @@ fun GeneratorStudioScreen(
                         )
                     }
                 }
+            }
+
+            // 4. Video Download Section — automatically displayed below after successful generation
+            if (completedProject != null &&
+                completedProject.localVideoPath != null &&
+                (pipelineState.phase == PipelinePhase.COMPLETED || pipelineState.activeProjectId == completedProject.id)
+            ) {
                 item {
-                    GenerateActionAndPipelineCard(
-                        formState = formState,
-                        pipelineState = pipelineState,
-                        onGenerateCartoon = onGenerateCartoon,
-                        onCancelGeneration = onCancelGeneration,
-                        onOpenVideoPlayer = onOpenVideoPlayer
-                    )
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("generated_video_section"),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Generated Cartoon Video",
+                                    style = MaterialTheme.typography.titleLarge,
+                                    fontWeight = FontWeight.Bold,
+                                    color = SuccessMint
+                                )
+                                Text(
+                                    text = completedProject.title,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = CyanSpark,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            OutlinedButton(
+                                onClick = { onOpenVideoPlayer(completedProject.id) },
+                                border = BorderStroke(1.dp, ElectricBlue),
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = ElectricBlue),
+                                modifier = Modifier.minimumInteractiveComponentSize()
+                            ) {
+                                Icon(Icons.Filled.OpenInNew, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Scenes")
+                            }
+                        }
+
+                        VideoPlayerAndDownloadCard(
+                            project = completedProject,
+                            isGenerationRunning = pipelineState.isRunning,
+                            defaultMovieNumber = totalProjectsCount.coerceAtLeast(1),
+                            onRegenerate = onRegenerateProject,
+                            onShowMessage = onShowMessage,
+                            onVideoDownloaded = onVideoDownloaded
+                        )
+                    }
                 }
             }
 
@@ -227,14 +381,29 @@ private fun PromptEditorCard(
     onPromptChange: (String) -> Unit,
     onClearPrompt: () -> Unit,
     onRandomStory: () -> Unit,
-    onGenerateStory: () -> Unit
+    onGenerateStory: () -> Unit,
+    onShowMessage: (String) -> Unit
 ) {
+    @Suppress("DEPRECATION")
+    val clipboard = LocalClipboardManager.current
+
     GlassStudioCard(highlighted = true, modifier = Modifier.fillMaxWidth()) {
-        Text(
-            text = "Story Prompt",
-            style = MaterialTheme.typography.titleMedium,
-            color = MaterialTheme.colorScheme.onBackground
-        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "Cartoon Video Prompt",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onBackground
+            )
+            Text(
+                text = "${formState.prompt.length} chars",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
         Spacer(modifier = Modifier.height(8.dp))
 
         OutlinedTextField(
@@ -243,7 +412,7 @@ private fun PromptEditorCard(
             placeholder = {
                 Text(
                     text = stringResource(R.string.prompt_placeholder),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.72f)
                 )
             },
             minLines = 5,
@@ -278,11 +447,67 @@ private fun PromptEditorCard(
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             OutlinedButton(
+                onClick = onClearPrompt,
+                enabled = formState.prompt.isNotEmpty(),
+                border = BorderStroke(1.dp, StudioOutline),
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.onSurfaceVariant),
+                modifier = Modifier
+                    .minimumInteractiveComponentSize()
+                    .testTag("clear_prompt_button")
+            ) {
+                Icon(Icons.Filled.Clear, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(stringResource(R.string.btn_clear_prompt))
+            }
+
+            OutlinedButton(
+                onClick = {
+                    val clipText = clipboard.getText()?.text
+                    if (!clipText.isNullOrBlank()) {
+                        onPromptChange(clipText)
+                        onShowMessage("Prompt pasted!")
+                    } else {
+                        onShowMessage("Clipboard is empty.")
+                    }
+                },
+                border = BorderStroke(1.dp, CyanSpark.copy(alpha = 0.7f)),
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = CyanSpark),
+                modifier = Modifier
+                    .minimumInteractiveComponentSize()
+                    .testTag("paste_prompt_button")
+            ) {
+                Icon(Icons.Filled.ContentPaste, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(stringResource(R.string.btn_paste_prompt))
+            }
+
+            OutlinedButton(
+                onClick = {
+                    if (formState.prompt.isNotBlank()) {
+                        clipboard.setText(AnnotatedString(formState.prompt))
+                        onShowMessage("Prompt copied!")
+                    }
+                },
+                enabled = formState.prompt.isNotBlank(),
+                border = BorderStroke(1.dp, StudioOutline),
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.onSurfaceVariant),
+                modifier = Modifier
+                    .minimumInteractiveComponentSize()
+                    .testTag("copy_prompt_button")
+            ) {
+                Icon(Icons.Filled.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(stringResource(R.string.btn_copy_prompt))
+            }
+
+            OutlinedButton(
                 onClick = onGenerateStory,
                 enabled = !formState.isGeneratingStoryIdea,
                 border = BorderStroke(1.dp, ElectricViolet),
                 colors = ButtonDefaults.outlinedButtonColors(contentColor = ElectricViolet),
-                modifier = Modifier.testTag("generate_story_button")
+                modifier = Modifier
+                    .minimumInteractiveComponentSize()
+                    .testTag("generate_story_button")
             ) {
                 if (formState.isGeneratingStoryIdea) {
                     CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
@@ -297,23 +522,13 @@ private fun PromptEditorCard(
                 onClick = onRandomStory,
                 border = BorderStroke(1.dp, ElectricBlue),
                 colors = ButtonDefaults.outlinedButtonColors(contentColor = ElectricBlue),
-                modifier = Modifier.testTag("random_story_button")
+                modifier = Modifier
+                    .minimumInteractiveComponentSize()
+                    .testTag("random_story_button")
             ) {
                 Icon(Icons.Filled.Casino, contentDescription = null, modifier = Modifier.size(16.dp))
                 Spacer(modifier = Modifier.width(6.dp))
                 Text(stringResource(R.string.btn_random_story))
-            }
-
-            OutlinedButton(
-                onClick = onClearPrompt,
-                enabled = formState.prompt.isNotEmpty(),
-                border = BorderStroke(1.dp, StudioOutline),
-                colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.onSurfaceVariant),
-                modifier = Modifier.testTag("clear_prompt_button")
-            ) {
-                Icon(Icons.Filled.Clear, contentDescription = null, modifier = Modifier.size(16.dp))
-                Spacer(modifier = Modifier.width(6.dp))
-                Text(stringResource(R.string.btn_clear_prompt))
             }
         }
     }
@@ -520,31 +735,23 @@ private fun CastConsistencyCard(
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
         Spacer(modifier = Modifier.height(8.dp))
-        if (savedCharacters.isEmpty()) {
-            Text(
-                text = "No saved characters yet — AI will design consistent characters automatically, or create yours in the Characters tab.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        } else {
-            FlowRow(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                savedCharacters.forEach { ch ->
-                    val selected = ch.id in selectedIds
-                    FilterChip(
-                        selected = selected,
-                        onClick = { onToggleCharacter(ch.id) },
-                        label = { Text("${ch.name} (${ch.voiceGender.lowercase()})") },
-                        colors = FilterChipDefaults.filterChipColors(
-                            selectedContainerColor = ElectricViolet.copy(alpha = 0.35f),
-                            selectedLabelColor = Color.White,
-                            containerColor = StudioSurface,
-                            labelColor = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            savedCharacters.forEach { ch ->
+                val selected = ch.id in selectedIds
+                FilterChip(
+                    selected = selected,
+                    onClick = { onToggleCharacter(ch.id) },
+                    label = { Text("${ch.name} (${ch.voiceGender.lowercase()})") },
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = ElectricViolet.copy(alpha = 0.35f),
+                        selectedLabelColor = Color.White,
+                        containerColor = StudioSurface,
+                        labelColor = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                }
+                )
             }
         }
     }
@@ -555,25 +762,31 @@ private fun GenerateActionAndPipelineCard(
     formState: GeneratorFormState,
     pipelineState: GenerationPipelineState,
     onGenerateCartoon: () -> Unit,
-    onCancelGeneration: () -> Unit,
-    onOpenVideoPlayer: (String) -> Unit
+    onRetryGeneration: () -> Unit,
+    onCancelGeneration: () -> Unit
 ) {
     GlassStudioCard(highlighted = pipelineState.isRunning, modifier = Modifier.fillMaxWidth()) {
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
+            Icon(
+                imageVector = Icons.Filled.AllInclusive,
+                contentDescription = "Unlimited generation",
+                tint = SuccessMint,
+                modifier = Modifier.size(18.dp)
+            )
+            Spacer(modifier = Modifier.width(8.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = "Production Cost",
+                    text = "Unlimited AI Video Studio",
                     style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = SuccessMint
                 )
                 Text(
-                    text = "${formState.duration.creditCost} credits • ${formState.duration.sceneCount} AI scenes • ${formState.resolution.label}",
+                    text = "${formState.style.label} • ${formState.duration.sceneCount} AI scenes • ${formState.resolution.label}",
                     style = MaterialTheme.typography.titleSmall,
-                    color = WarningAmber
+                    color = CyanSpark
                 )
             }
         }
@@ -586,6 +799,7 @@ private fun GenerateActionAndPipelineCard(
                 onClick = onGenerateCartoon,
                 modifier = Modifier
                     .fillMaxWidth()
+                    .height(54.dp)
                     .testTag("generate_cartoon_button")
             )
         } else {
@@ -593,7 +807,10 @@ private fun GenerateActionAndPipelineCard(
                 onClick = onCancelGeneration,
                 border = BorderStroke(1.dp, ErrorCoral),
                 colors = ButtonDefaults.outlinedButtonColors(contentColor = ErrorCoral),
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .minimumInteractiveComponentSize()
+                    .height(50.dp)
             ) {
                 Icon(Icons.Filled.Cancel, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(modifier = Modifier.width(6.dp))
@@ -608,19 +825,33 @@ private fun GenerateActionAndPipelineCard(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
-                        text = pipelineState.phase.label,
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = when (pipelineState.phase) {
-                            PipelinePhase.COMPLETED -> SuccessMint
-                            PipelinePhase.FAILED -> ErrorCoral
-                            else -> CyanSpark
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        if (pipelineState.isRunning) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(18.dp),
+                                strokeWidth = 2.2.dp,
+                                color = CyanSpark
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
                         }
-                    )
+                        Text(
+                            text = pipelineState.phase.label,
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = when (pipelineState.phase) {
+                                PipelinePhase.COMPLETED -> SuccessMint
+                                PipelinePhase.FAILED -> ErrorCoral
+                                else -> CyanSpark
+                            }
+                        )
+                    }
                     Text(
                         text = "${pipelineState.progressPercent}%",
-                        style = MaterialTheme.typography.labelSmall,
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.onBackground
                     )
                 }
@@ -632,7 +863,11 @@ private fun GenerateActionAndPipelineCard(
                         .fillMaxWidth()
                         .height(8.dp)
                         .clip(RoundedCornerShape(50)),
-                    color = if (pipelineState.phase == PipelinePhase.FAILED) ErrorCoral else ElectricViolet,
+                    color = when (pipelineState.phase) {
+                        PipelinePhase.COMPLETED -> SuccessMint
+                        PipelinePhase.FAILED -> ErrorCoral
+                        else -> ElectricViolet
+                    },
                     trackColor = StudioSurface
                 )
 
@@ -652,22 +887,38 @@ private fun GenerateActionAndPipelineCard(
                         shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Row(
-                            modifier = Modifier.padding(12.dp),
-                            verticalAlignment = Alignment.Top
-                        ) {
-                            Icon(
-                                imageVector = Icons.Filled.ErrorOutline,
-                                contentDescription = "Error",
-                                tint = ErrorCoral,
-                                modifier = Modifier.size(18.dp)
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                text = pipelineState.errorMessage,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onErrorContainer
-                            )
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Row(verticalAlignment = Alignment.Top) {
+                                Icon(
+                                    imageVector = Icons.Filled.ErrorOutline,
+                                    contentDescription = "Error",
+                                    tint = ErrorCoral,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = pipelineState.errorMessage,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onErrorContainer
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(10.dp))
+                            Button(
+                                onClick = onRetryGeneration,
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = ErrorCoral,
+                                    contentColor = Color.White
+                                ),
+                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .minimumInteractiveComponentSize()
+                                    .testTag("retry_generation_button")
+                            ) {
+                                Icon(Icons.Filled.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(stringResource(R.string.btn_retry_generation))
+                            }
                         }
                     }
                 }
@@ -723,25 +974,6 @@ private fun GenerateActionAndPipelineCard(
                             )
                         }
                     }
-                }
-
-                if (pipelineState.phase == PipelinePhase.COMPLETED && !pipelineState.activeProjectId.isNullOrBlank()) {
-                    Spacer(modifier = Modifier.height(12.dp))
-                    GradientPrimaryButton(
-                        text = "Watch Cartoon Movie",
-                        onClick = { onOpenVideoPlayer(pipelineState.activeProjectId) },
-                        icon = {
-                            Icon(
-                                Icons.Filled.PlayArrow,
-                                contentDescription = null,
-                                tint = Color.White,
-                                modifier = Modifier.size(18.dp)
-                            )
-                        },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("watch_generated_movie_button")
-                    )
                 }
             }
         }

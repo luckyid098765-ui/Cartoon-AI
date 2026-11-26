@@ -21,8 +21,8 @@ enum class CartoonStyle(
     CARTOON_3D(
         key = "3D_CARTOON",
         label = "3D Cartoon",
-        promptAnchor = "high-end 3D Pixar-style CGI animated movie frame, soft global illumination, subsurface scattering, expressive stylized proportions",
-        tagline = "Pixar-inspired glossy 3D render"
+        promptAnchor = "high-end family-friendly Disney and Pixar-style 3D CGI animated movie frame, soft global illumination, subsurface scattering, charming stylized proportions",
+        tagline = "Disney/Pixar-inspired 3D animation"
     ),
     ANIME(
         key = "ANIME",
@@ -56,9 +56,9 @@ enum class CartoonStyle(
     ),
     CINEMATIC(
         key = "CINEMATIC",
-        label = "Original Cinematic Animation",
-        promptAnchor = "original feature-film cinematic animation, anamorphic depth of field, painterly stylized textures, dramatic volumetric lighting",
-        tagline = "Feature-film animated artistry"
+        label = "Realistic Cartoon",
+        promptAnchor = "realistic stylized feature-film CGI cartoon animation, physically based fur/fabric shaders, anamorphic depth of field, dramatic volumetric lighting",
+        tagline = "Realistic cinematic animation"
     );
 
     companion object {
@@ -75,15 +75,18 @@ enum class VideoDurationOption(
     val sceneCount: Int,
     val creditCost: Int
 ) {
-    SEC_30("SEC_30", "30 Seconds", "30s", 30, 3, 2),
-    MIN_1("MIN_1", "1 Minute", "1m", 60, 5, 4),
-    MIN_5("MIN_5", "5 Minutes", "5m", 300, 10, 8),
-    MIN_10("MIN_10", "10 Minutes", "10m", 600, 16, 12),
-    EXTENDED("EXTENDED", "Extended (15m+)", "15m+", 900, 20, 15);
+    SEC_10("SEC_10", "10 Seconds", "10s", 10, 2, 0),
+    SEC_30("SEC_30", "30 Seconds", "30s", 30, 3, 0),
+    MIN_1("MIN_1", "60 Seconds", "60s", 60, 5, 0),
+    MIN_2("MIN_2", "120 Seconds", "120s", 120, 8, 0),
+    MIN_5("MIN_5", "5 Minutes", "5m", 300, 10, 0),
+    MIN_10("MIN_10", "10 Minutes", "10m", 600, 16, 0);
 
     companion object {
-        fun fromKey(raw: String?): VideoDurationOption =
-            entries.firstOrNull { it.key == raw } ?: SEC_30
+        fun fromKey(raw: String?): VideoDurationOption = when (raw) {
+            "EXTENDED" -> MIN_10
+            else -> entries.firstOrNull { it.key == raw } ?: SEC_30
+        }
     }
 }
 
@@ -105,14 +108,16 @@ enum class CartoonLanguage(
 enum class VideoAspectRatio(
     val key: String,
     val label: String,
+    val width480: Int,
+    val height480: Int,
     val width720: Int,
     val height720: Int,
     val width1080: Int,
     val height1080: Int
 ) {
-    RATIO_16_9("RATIO_16_9", "16:9 YouTube", 1280, 720, 1920, 1080),
-    RATIO_9_16("RATIO_9_16", "9:16 Shorts & Reels", 720, 1280, 1080, 1920),
-    RATIO_1_1("RATIO_1_1", "1:1 Square", 720, 720, 1080, 1080);
+    RATIO_16_9("RATIO_16_9", "16:9 YouTube", 848, 480, 1280, 720, 1920, 1080),
+    RATIO_9_16("RATIO_9_16", "9:16 Shorts & Reels", 480, 848, 720, 1280, 1080, 1920),
+    RATIO_1_1("RATIO_1_1", "1:1 Square", 480, 480, 720, 720, 1080, 1080);
 
     companion object {
         fun fromKey(raw: String?): VideoAspectRatio =
@@ -124,6 +129,7 @@ enum class VideoResolution(
     val key: String,
     val label: String
 ) {
+    RES_480P("RES_480P", "480p SD"),
     RES_720P("RES_720P", "720p HD"),
     RES_1080P("RES_1080P", "1080p Full HD"),
     RES_4K("RES_4K", "4K Ultra HD");

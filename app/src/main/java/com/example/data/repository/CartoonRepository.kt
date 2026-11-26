@@ -296,7 +296,7 @@ class CartoonRepository(
             val payload = mapOf(
                 "userId" to uid,
                 "title" to project.title.trim().take(120).ifBlank { "Untitled Cartoon" },
-                "prompt" to project.prompt.trim().take(4000),
+                "prompt" to project.prompt.trim().take(20000),
                 "style" to project.style,
                 "durationOption" to project.durationOption,
                 "language" to project.language,
@@ -351,7 +351,7 @@ class CartoonRepository(
                 "updatedAt" to FieldValue.serverTimestamp()
             )
             title?.let { updates["title"] = it.trim().take(120).ifBlank { "Cartoon Movie" } }
-            prompt?.let { updates["prompt"] = it.trim().take(4000) }
+            prompt?.let { updates["prompt"] = it.trim().take(20000) }
             sceneCount?.let { updates["sceneCount"] = it.coerceIn(1, 30).toLong() }
             durationSeconds?.let { updates["durationSeconds"] = it.coerceIn(1, 1800).toLong() }
             scriptSummary?.let { updates["scriptSummary"] = it.take(8000) }
@@ -567,6 +567,41 @@ class CartoonRepository(
             throw e
         } catch (e: Exception) {
             handleFirestoreError(e, OperationType.CREATE, path)
+            Result.failure(e)
+        }
+    }
+
+    suspend fun deleteHistoryEntry(historyId: String): Result<Unit> {
+        val path = "users/${auth.currentUser?.uid ?: "unauthenticated"}/generationHistory/$historyId"
+        return try {
+            val uid = requireUserId()
+            db.collection("users").document(uid)
+                .collection("generationHistory").document(historyId)
+                .delete().await()
+            Result.success(Unit)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.DELETE, path)
+            Result.failure(e)
+        }
+    }
+
+    suspend fun clearHistory(): Result<Unit> {
+        val path = "users/${auth.currentUser?.uid ?: "unauthenticated"}/generationHistory"
+        return try {
+            val uid = requireUserId()
+            val snap = db.collection("users").document(uid)
+                .collection("generationHistory")
+                .get().await()
+            val batch = db.batch()
+            snap.documents.forEach { batch.delete(it.reference) }
+            batch.commit().await()
+            Result.success(Unit)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.DELETE, path)
             Result.failure(e)
         }
     }

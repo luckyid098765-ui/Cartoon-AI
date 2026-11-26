@@ -33,6 +33,7 @@ import com.example.data.model.VideoDurationOption
 import com.example.data.model.VideoResolution
 import com.example.data.model.VoiceGender
 import com.example.data.repository.CartoonRepository
+import com.example.data.repository.LocalStudioStore
 import com.example.media.CartoonVideoRenderer
 import com.example.media.SceneRenderInput
 import com.example.media.VoiceAndAudioEngine
@@ -78,14 +79,29 @@ data class GeneratorFormState(
     val storyIdeaError: String? = null
 )
 
+private data class FailedGenerationRequest(
+    val existingProjectId: String?,
+    val prompt: String,
+    val style: CartoonStyle,
+    val durationOption: VideoDurationOption,
+    val language: CartoonLanguage,
+    val aspectRatio: VideoAspectRatio,
+    val resolution: VideoResolution,
+    val lockedCharacters: List<SavedCharacter>,
+    val titleOverride: String?
+)
+
 class CartoonStudioViewModel(
-    private val repository: CartoonRepository,
+    private val repository: CartoonRepository?,
+    private val localStore: LocalStudioStore,
     private val aiService: CartoonAiService,
     private val audioEngine: VoiceAndAudioEngine,
     private val videoRenderer: CartoonVideoRenderer,
     private val filesDir: File,
-    private val currentUserId: String
+    private val currentUserId: String?
 ) : ViewModel() {
+
+    private val ownerId: String = currentUserId ?: "local_guest"
 
     private fun unwrapFirestoreError(error: Throwable, fallbackMessage: String): DataUiState.Error {
         val firestoreError = generateSequence(error) { it.cause }
@@ -98,28 +114,52 @@ class CartoonStudioViewModel(
     }
 
     val userProfileState: StateFlow<DataUiState<UserProfile?>> =
-        repository.observeUserProfile(currentUserId)
-            .map<UserProfile?, DataUiState<UserProfile?>> { DataUiState.Success(it) }
-            .catch { emit(unwrapFirestoreError(it, "Failed to load profile")) }
-            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), DataUiState.Loading)
+        if (repository != null && !currentUserId.isNullOrBlank()) {
+            repository.observeUserProfile(currentUserId)
+                .map<UserProfile?, DataUiState<UserProfile?>> { DataUiState.Success(it) }
+                .catch { emit(unwrapFirestoreError(it, "Failed to load profile")) }
+                .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), DataUiState.Loading)
+        } else {
+            localStore.profile
+                .map<UserProfile?, DataUiState<UserProfile?>> { DataUiState.Success(it) }
+                .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), DataUiState.Success(localStore.profile.value))
+        }
 
     val projectsState: StateFlow<DataUiState<List<CartoonProject>>> =
-        repository.observeProjects(currentUserId)
-            .map<List<CartoonProject>, DataUiState<List<CartoonProject>>> { DataUiState.Success(it) }
-            .catch { emit(unwrapFirestoreError(it, "Failed to load projects")) }
-            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), DataUiState.Loading)
+        if (repository != null && !currentUserId.isNullOrBlank()) {
+            repository.observeProjects(currentUserId)
+                .map<List<CartoonProject>, DataUiState<List<CartoonProject>>> { DataUiState.Success(it) }
+                .catch { emit(unwrapFirestoreError(it, "Failed to load projects")) }
+                .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), DataUiState.Loading)
+        } else {
+            localStore.projects
+                .map<List<CartoonProject>, DataUiState<List<CartoonProject>>> { DataUiState.Success(it) }
+                .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), DataUiState.Success(localStore.projects.value))
+        }
 
     val charactersState: StateFlow<DataUiState<List<SavedCharacter>>> =
-        repository.observeCharacters(currentUserId)
-            .map<List<SavedCharacter>, DataUiState<List<SavedCharacter>>> { DataUiState.Success(it) }
-            .catch { emit(unwrapFirestoreError(it, "Failed to load characters")) }
-            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), DataUiState.Loading)
+        if (repository != null && !currentUserId.isNullOrBlank()) {
+            repository.observeCharacters(currentUserId)
+                .map<List<SavedCharacter>, DataUiState<List<SavedCharacter>>> { DataUiState.Success(it) }
+                .catch { emit(unwrapFirestoreError(it, "Failed to load characters")) }
+                .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), DataUiState.Loading)
+        } else {
+            localStore.characters
+                .map<List<SavedCharacter>, DataUiState<List<SavedCharacter>>> { DataUiState.Success(it) }
+                .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), DataUiState.Success(localStore.characters.value))
+        }
 
     val historyState: StateFlow<DataUiState<List<GenerationHistoryEntry>>> =
-        repository.observeHistory(currentUserId)
-            .map<List<GenerationHistoryEntry>, DataUiState<List<GenerationHistoryEntry>>> { DataUiState.Success(it) }
-            .catch { emit(unwrapFirestoreError(it, "Failed to load history")) }
-            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), DataUiState.Loading)
+        if (repository != null && !currentUserId.isNullOrBlank()) {
+            repository.observeHistory(currentUserId)
+                .map<List<GenerationHistoryEntry>, DataUiState<List<GenerationHistoryEntry>>> { DataUiState.Success(it) }
+                .catch { emit(unwrapFirestoreError(it, "Failed to load history")) }
+                .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), DataUiState.Loading)
+        } else {
+            localStore.history
+                .map<List<GenerationHistoryEntry>, DataUiState<List<GenerationHistoryEntry>>> { DataUiState.Success(it) }
+                .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), DataUiState.Success(localStore.history.value))
+        }
 
     private val _selectedProjectId = MutableStateFlow<String?>(null)
     val selectedProjectId: StateFlow<String?> = _selectedProjectId.asStateFlow()
@@ -129,10 +169,13 @@ class CartoonStudioViewModel(
         _selectedProjectId.flatMapLatest { projectId ->
             if (projectId.isNullOrBlank()) {
                 flowOf(DataUiState.Success(emptyList()))
-            } else {
+            } else if (repository != null && !currentUserId.isNullOrBlank()) {
                 repository.observeScenes(currentUserId, projectId)
                     .map<List<SceneRecord>, DataUiState<List<SceneRecord>>> { DataUiState.Success(it) }
                     .catch { emit(unwrapFirestoreError(it, "Failed to load scenes")) }
+            } else {
+                localStore.observeScenes(projectId)
+                    .map<List<SceneRecord>, DataUiState<List<SceneRecord>>> { DataUiState.Success(it) }
             }
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), DataUiState.Loading)
 
@@ -149,6 +192,7 @@ class CartoonStudioViewModel(
     val uiNotice: StateFlow<String?> = _uiNotice.asStateFlow()
 
     private var activeGenerationJob: Job? = null
+    private var lastFailedRequest: FailedGenerationRequest? = null
 
     private val randomStories = listOf(
         "A fearless little robot fox named Bolt and a wise owl named Luna discover a floating clockwork island in the clouds. Together they must repair the giant crystal compass before the sky lanterns go out forever.",
@@ -159,6 +203,10 @@ class CartoonStudioViewModel(
 
     fun clearNotice() {
         _uiNotice.value = null
+    }
+
+    fun showNotice(message: String) {
+        _uiNotice.value = message
     }
 
     fun selectProject(projectId: String?) {
@@ -177,6 +225,16 @@ class CartoonStudioViewModel(
         val current = _formState.value.prompt
         val next = randomStories.filter { it != current }.randomOrNull() ?: randomStories.first()
         _formState.update { it.copy(prompt = next, storyIdeaError = null) }
+    }
+
+    fun applyQuickTheme(style: CartoonStyle, samplePrompt: String? = null) {
+        _formState.update { state ->
+            state.copy(
+                style = style,
+                prompt = if (state.prompt.isBlank() && !samplePrompt.isNullOrBlank()) samplePrompt else state.prompt,
+                storyIdeaError = null
+            )
+        }
     }
 
     fun selectStyle(style: CartoonStyle) {
@@ -253,22 +311,16 @@ class CartoonStudioViewModel(
         }
     }
 
-    fun generateCartoonMovie(onOpenPlayer: (String) -> Unit) {
+    // Unlimited generation without daily/monthly quotas, credits, or arbitrary prompt-length limits
+    fun generateCartoonMovie(onOpenPlayer: (String) -> Unit = {}) {
         val form = _formState.value
         val trimmedPrompt = form.prompt.trim()
-        if (trimmedPrompt.length < 10) {
-            _uiNotice.value = "Please enter a cartoon story or prompt (at least 10 characters)."
+        if (trimmedPrompt.isBlank()) {
+            _uiNotice.value = "Please paste or enter a cartoon prompt."
             return
         }
         if (_pipelineState.value.isRunning) {
-            _uiNotice.value = "A cartoon movie is already generating."
-            return
-        }
-
-        val currentProfile = (userProfileState.value as? DataUiState.Success)?.data
-        val credits = currentProfile?.creditsRemaining ?: 50L
-        if (credits < form.duration.creditCost) {
-            _uiNotice.value = "Not enough credits (${credits} left, need ${form.duration.creditCost}). Refill starter credits in Account."
+            _uiNotice.value = "A cartoon video is already generating."
             return
         }
 
@@ -290,11 +342,34 @@ class CartoonStudioViewModel(
         }
     }
 
+    fun retryFailedGeneration(onOpenPlayer: (String) -> Unit = {}) {
+        if (_pipelineState.value.isRunning) return
+        val last = lastFailedRequest
+        if (last != null) {
+            activeGenerationJob = viewModelScope.launch {
+                runFullPipeline(
+                    existingProjectId = last.existingProjectId,
+                    prompt = last.prompt,
+                    style = last.style,
+                    durationOption = last.durationOption,
+                    language = last.language,
+                    aspectRatio = last.aspectRatio,
+                    resolution = last.resolution,
+                    lockedCharacters = last.lockedCharacters,
+                    onOpenPlayer = onOpenPlayer,
+                    titleOverride = last.titleOverride
+                )
+            }
+        } else {
+            generateCartoonMovie(onOpenPlayer)
+        }
+    }
+
     fun editStoryAndRegenerate(
         project: CartoonProject,
         newTitle: String,
         newPrompt: String,
-        onOpenPlayer: (String) -> Unit
+        onOpenPlayer: (String) -> Unit = {}
     ) {
         if (_pipelineState.value.isRunning) {
             _uiNotice.value = "Wait for current generation to finish first."
@@ -302,7 +377,7 @@ class CartoonStudioViewModel(
         }
         val savedChars = (charactersState.value as? DataUiState.Success)?.data.orEmpty()
         activeGenerationJob = viewModelScope.launch {
-            repository.updateProjectProgress(
+            updateProject(
                 projectId = project.id,
                 title = newTitle,
                 prompt = newPrompt,
@@ -327,15 +402,8 @@ class CartoonStudioViewModel(
 
     fun regenerateCartoon(
         project: CartoonProject,
-        onOpenPlayer: (String) -> Unit
+        onOpenPlayer: (String) -> Unit = {}
     ) {
-        val durationOption = VideoDurationOption.fromKey(project.durationOption)
-        val currentProfile = (userProfileState.value as? DataUiState.Success)?.data
-        val credits = currentProfile?.creditsRemaining ?: 50L
-        if (credits < durationOption.creditCost) {
-            _uiNotice.value = "Not enough credits (${credits} left, need ${durationOption.creditCost}). Refill starter credits in Account."
-            return
-        }
         editStoryAndRegenerate(
             project = project,
             newTitle = project.title,
@@ -346,7 +414,7 @@ class CartoonStudioViewModel(
 
     fun saveProjectToMyProjects(project: CartoonProject) {
         viewModelScope.launch {
-            val result = repository.updateProjectProgress(
+            val result = updateProject(
                 projectId = project.id,
                 title = project.title,
                 prompt = project.prompt,
@@ -380,6 +448,18 @@ class CartoonStudioViewModel(
         titleOverride: String? = null
     ) {
         var projectId = existingProjectId
+        lastFailedRequest = FailedGenerationRequest(
+            existingProjectId = existingProjectId,
+            prompt = prompt,
+            style = style,
+            durationOption = durationOption,
+            language = language,
+            aspectRatio = aspectRatio,
+            resolution = resolution,
+            lockedCharacters = lockedCharacters,
+            titleOverride = titleOverride
+        )
+
         try {
             _pipelineState.value = GenerationPipelineState(
                 isRunning = true,
@@ -390,7 +470,7 @@ class CartoonStudioViewModel(
                 statusDetail = "Converting story into ${durationOption.sceneCount}-scene ${language.label} script..."
             )
 
-            // 1. Generate complete script & scene breakdown via Gemini 3.8 Flash
+            // 1. Generate complete script & scene breakdown via Gemini AI
             val script = aiService.generateFullScript(
                 prompt = prompt,
                 style = style,
@@ -400,9 +480,9 @@ class CartoonStudioViewModel(
             )
             val movieTitle = titleOverride?.takeIf { it.isNotBlank() } ?: script.title
 
-            // 2. Create or update Firestore Project & Scenes
+            // 2. Create or update Project & Scenes
             if (projectId == null) {
-                val created = repository.createProject(
+                val created = createProjectRecord(
                     CartoonProject(
                         title = movieTitle,
                         prompt = prompt,
@@ -420,8 +500,9 @@ class CartoonStudioViewModel(
                     )
                 )
                 projectId = created.getOrThrow()
+                lastFailedRequest = lastFailedRequest?.copy(existingProjectId = projectId)
             } else {
-                repository.updateProjectProgress(
+                updateProject(
                     projectId = projectId,
                     title = movieTitle,
                     prompt = prompt,
@@ -437,7 +518,7 @@ class CartoonStudioViewModel(
             val initialSceneRecords = script.scenes.map { sc ->
                 SceneRecord(
                     id = "scene_${sc.sceneIndex}",
-                    userId = currentUserId,
+                    userId = ownerId,
                     projectId = projectId,
                     sceneIndex = sc.sceneIndex.toLong(),
                     title = sc.title,
@@ -451,7 +532,7 @@ class CartoonStudioViewModel(
                     retryCount = 0L
                 )
             }
-            repository.saveScenesBatch(projectId, initialSceneRecords).getOrThrow()
+            saveScenes(projectId, initialSceneRecords).getOrThrow()
 
             val jobs = initialSceneRecords.map {
                 SceneJobProgress(
@@ -473,7 +554,7 @@ class CartoonStudioViewModel(
                 )
             }
 
-            // 3. Build character portrait reference map (reusing saved character portraits if present)
+            // 3. Build character portrait reference map
             val referencePortraits = mutableMapOf<String, Bitmap>()
             for (locked in lockedCharacters) {
                 loadSavedCharacterBitmap(locked)?.let { referencePortraits[locked.name] = it }
@@ -508,7 +589,7 @@ class CartoonStudioViewModel(
                         statusDetail = "Generating Scene ${index + 1}/$totalScenes: ${sceneSpec.title}"
                     )
                 }
-                repository.updateSceneStatus(
+                updateScene(
                     projectId = projectId,
                     sceneId = sceneId,
                     status = SceneStatus.GENERATING.key,
@@ -541,14 +622,14 @@ class CartoonStudioViewModel(
                         sceneJobs = jobs.toList()
                     )
                 }
-                repository.updateSceneStatus(
+                updateScene(
                     projectId = projectId,
                     sceneId = sceneId,
                     status = SceneStatus.COMPLETED.key,
                     retryCount = attemptsUsed.toLong(),
                     localImagePath = sceneFile.absolutePath
                 )
-                repository.updateProjectProgress(
+                updateProject(
                     projectId = projectId,
                     status = ProjectStatus.GENERATING.key,
                     progressPercent = sceneProgress,
@@ -565,7 +646,7 @@ class CartoonStudioViewModel(
                 )
             }
             val pitchMap = script.characters.associate { it.name to it.voicePitch }
-            val minPerSceneSec = (durationOption.targetSeconds / totalScenes).coerceIn(4, 15)
+            val minPerSceneSec = (durationOption.targetSeconds / totalScenes).coerceIn(3, 15)
             val sceneInputs = mutableListOf<SceneRenderInput>()
 
             for ((index, sceneSpec) in script.scenes.withIndex()) {
@@ -592,7 +673,7 @@ class CartoonStudioViewModel(
                 it.copy(
                     phase = PipelinePhase.ENCODING_VIDEO,
                     progressPercent = 84,
-                    statusDetail = "Muxing scenes, lip-sync & audio into MP4..."
+                    statusDetail = "Rendering final animated MP4 video..."
                 )
             }
             val renderResult = videoRenderer.renderMovieMp4(
@@ -613,7 +694,7 @@ class CartoonStudioViewModel(
 
             val thumbBase64 = sceneBitmaps.firstOrNull()?.let { encodeThumbnailBase64(it) }
 
-            repository.updateProjectProgress(
+            updateProject(
                 projectId = projectId,
                 status = ProjectStatus.COMPLETED.key,
                 progressPercent = 100,
@@ -622,18 +703,14 @@ class CartoonStudioViewModel(
                 localVideoPath = renderResult.outputFile.absolutePath,
                 thumbnailBase64 = thumbBase64
             )
-            repository.deductCreditsAndRecordStats(
-                creditsCost = durationOption.creditCost.toLong(),
-                videosIncrement = 1L,
-                scenesIncrement = totalScenes.toLong()
-            )
-            repository.addHistoryEntry(
+            recordStats(videosIncrement = 1L, scenesIncrement = totalScenes.toLong())
+            recordHistoryEntry(
                 GenerationHistoryEntry(
-                    userId = currentUserId,
+                    userId = ownerId,
                     projectId = projectId,
                     projectTitle = movieTitle,
                     actionType = "FULL_MOVIE",
-                    creditsUsed = durationOption.creditCost.toLong(),
+                    creditsUsed = 0L,
                     status = "COMPLETED",
                     durationLabel = durationOption.shortLabel,
                     language = language.label,
@@ -641,15 +718,17 @@ class CartoonStudioViewModel(
                     details = "$totalScenes scenes • ${renderResult.actualWidth}x${renderResult.actualHeight} MP4"
                 )
             )
-            repository.updateUserPreferences(style, language)
+            updatePreferences(style, language)
 
+            lastFailedRequest = null
             _pipelineState.update {
                 it.copy(
                     isRunning = false,
                     phase = PipelinePhase.COMPLETED,
                     progressPercent = 100,
-                    statusDetail = "Cartoon movie ready! (${renderResult.actualWidth}x${renderResult.actualHeight})",
-                    completedVideoPath = renderResult.outputFile.absolutePath
+                    statusDetail = "Cartoon video ready! (${renderResult.actualWidth}x${renderResult.actualHeight} MP4)",
+                    completedVideoPath = renderResult.outputFile.absolutePath,
+                    errorMessage = null
                 )
             }
             onOpenPlayer(projectId)
@@ -657,20 +736,20 @@ class CartoonStudioViewModel(
             throw e
         } catch (e: Exception) {
             Log.e(TAG, "Cartoon generation pipeline failed", e)
-            val errMsg = e.localizedMessage ?: "AI generation service failed or is not configured."
+            val errMsg = e.localizedMessage ?: "AI video service failed or is temporarily busy. Tap Retry to try again."
             projectId?.let { pid ->
-                repository.updateProjectProgress(
+                updateProject(
                     projectId = pid,
                     status = ProjectStatus.FAILED.key,
                     progressPercent = _pipelineState.value.progressPercent,
                     completedScenes = _pipelineState.value.sceneJobs.count { it.status == SceneStatus.COMPLETED },
                     errorMessage = errMsg
                 )
-                repository.addHistoryEntry(
+                recordHistoryEntry(
                     GenerationHistoryEntry(
-                        userId = currentUserId,
+                        userId = ownerId,
                         projectId = pid,
-                        projectTitle = _pipelineState.value.activeTitle.ifBlank { "Cartoon Movie" },
+                        projectTitle = _pipelineState.value.activeTitle.ifBlank { "Cartoon Video" },
                         actionType = "FULL_MOVIE",
                         creditsUsed = 0L,
                         status = "FAILED",
@@ -712,7 +791,7 @@ class CartoonStudioViewModel(
                 statusDetail = "Regenerating Scene ${scene.sceneIndex + 1}: ${scene.title}..."
             )
             try {
-                repository.updateSceneStatus(
+                updateScene(
                     projectId = project.id,
                     sceneId = scene.id,
                     status = SceneStatus.GENERATING.key,
@@ -750,7 +829,7 @@ class CartoonStudioViewModel(
                 }
                 val file = saveSceneFrameFile(project.id, scene.sceneIndex.toInt(), newBitmap)
 
-                repository.updateSceneStatus(
+                updateScene(
                     projectId = project.id,
                     sceneId = scene.id,
                     status = SceneStatus.COMPLETED.key,
@@ -758,12 +837,11 @@ class CartoonStudioViewModel(
                     localImagePath = file.absolutePath
                 )
 
-                // Re-render combined MP4 with updated frame
                 _pipelineState.update {
                     it.copy(
                         phase = PipelinePhase.ENCODING_VIDEO,
                         progressPercent = 65,
-                        statusDetail = "Rebuilding MP4 movie with updated scene..."
+                        statusDetail = "Rebuilding MP4 video with updated scene..."
                     )
                 }
                 val sorted = allScenes.sortedBy { it.sceneIndex }
@@ -795,7 +873,7 @@ class CartoonStudioViewModel(
                 }
 
                 val updatedThumb = if (scene.sceneIndex == 0L) encodeThumbnailBase64(newBitmap) else null
-                repository.updateProjectProgress(
+                updateProject(
                     projectId = project.id,
                     status = ProjectStatus.COMPLETED.key,
                     progressPercent = 100,
@@ -804,13 +882,13 @@ class CartoonStudioViewModel(
                     localVideoPath = renderResult.outputFile.absolutePath,
                     thumbnailBase64 = updatedThumb
                 )
-                repository.addHistoryEntry(
+                recordHistoryEntry(
                     GenerationHistoryEntry(
-                        userId = currentUserId,
+                        userId = ownerId,
                         projectId = project.id,
                         projectTitle = project.title,
                         actionType = "SCENE_REGEN",
-                        creditsUsed = 1L,
+                        creditsUsed = 0L,
                         status = "COMPLETED",
                         durationLabel = "${renderResult.durationSeconds}s",
                         language = lang.label,
@@ -832,7 +910,7 @@ class CartoonStudioViewModel(
                 throw e
             } catch (e: Exception) {
                 val err = e.localizedMessage ?: "Failed to regenerate scene."
-                repository.updateSceneStatus(
+                updateScene(
                     projectId = project.id,
                     sceneId = scene.id,
                     status = SceneStatus.FAILED.key,
@@ -886,22 +964,27 @@ class CartoonStudioViewModel(
                     base64Thumb = encodeThumbnailBase64(bmp)
                 }
 
-                val result = repository.saveCharacter(
-                    SavedCharacter(
-                        userId = currentUserId,
-                        name = name.trim(),
-                        role = role.trim().ifBlank { "Lead Character" },
-                        appearance = appearance.trim(),
-                        outfit = outfit.trim(),
-                        personality = personality.trim().takeIf { it.isNotEmpty() },
-                        voiceGender = voiceGender.key,
-                        voicePitch = voicePitch.toDouble(),
-                        defaultExpression = expression.key,
-                        style = style.key,
-                        localPortraitPath = localPath,
-                        portraitBase64 = base64Thumb
-                    )
+                val character = SavedCharacter(
+                    userId = ownerId,
+                    name = name.trim(),
+                    role = role.trim().ifBlank { "Lead Character" },
+                    appearance = appearance.trim(),
+                    outfit = outfit.trim(),
+                    personality = personality.trim().takeIf { it.isNotEmpty() },
+                    voiceGender = voiceGender.key,
+                    voicePitch = voicePitch.toDouble(),
+                    defaultExpression = expression.key,
+                    style = style.key,
+                    localPortraitPath = localPath,
+                    portraitBase64 = base64Thumb
                 )
+
+                val result = if (repository != null && !currentUserId.isNullOrBlank()) {
+                    repository.saveCharacter(character)
+                } else {
+                    localStore.saveCharacter(character)
+                }
+
                 result.onSuccess {
                     _uiNotice.value = "Saved character \"$name\"!"
                     onComplete()
@@ -920,24 +1003,192 @@ class CartoonStudioViewModel(
 
     fun deleteCharacter(characterId: String) {
         viewModelScope.launch {
-            repository.deleteCharacter(characterId)
-                .onFailure { _uiNotice.value = it.localizedMessage ?: "Could not delete character." }
+            val result = if (repository != null && !currentUserId.isNullOrBlank()) {
+                repository.deleteCharacter(characterId)
+            } else {
+                localStore.deleteCharacter(characterId)
+            }
+            result.onFailure { _uiNotice.value = it.localizedMessage ?: "Could not delete character." }
         }
     }
 
     fun deleteProject(projectId: String) {
         viewModelScope.launch {
             if (_selectedProjectId.value == projectId) _selectedProjectId.value = null
-            repository.deleteProject(projectId)
-                .onFailure { _uiNotice.value = it.localizedMessage ?: "Could not delete project." }
+            val result = if (repository != null && !currentUserId.isNullOrBlank()) {
+                repository.deleteProject(projectId)
+            } else {
+                localStore.deleteProject(projectId)
+            }
+            result.onFailure { _uiNotice.value = it.localizedMessage ?: "Could not delete project." }
         }
     }
 
-    fun refillStarterCredits() {
+    fun deleteHistoryEntry(historyId: String) {
         viewModelScope.launch {
-            repository.refillStarterCreditsIfLow()
-                .onSuccess { _uiNotice.value = "Credits topped up to 50!" }
-                .onFailure { _uiNotice.value = it.localizedMessage ?: "Credit refill requires low balance (< 10)." }
+            val result = if (repository != null && !currentUserId.isNullOrBlank()) {
+                repository.deleteHistoryEntry(historyId)
+            } else {
+                localStore.deleteHistoryEntry(historyId)
+            }
+            result.onSuccess {
+                _uiNotice.value = "History item deleted."
+            }.onFailure {
+                _uiNotice.value = it.localizedMessage ?: "Could not delete history item."
+            }
+        }
+    }
+
+    fun clearAllHistory() {
+        viewModelScope.launch {
+            val result = if (repository != null && !currentUserId.isNullOrBlank()) {
+                repository.clearHistory()
+            } else {
+                localStore.clearHistory()
+            }
+            result.onSuccess {
+                _uiNotice.value = "Video history cleared."
+            }.onFailure {
+                _uiNotice.value = it.localizedMessage ?: "Could not clear history."
+            }
+        }
+    }
+
+    fun recordVideoDownload(
+        project: CartoonProject,
+        fileName: String,
+        displayLocation: String,
+        bytesCopied: Long
+    ) {
+        viewModelScope.launch {
+            val sizeText = com.example.media.VideoExportHelper.formatByteSize(bytesCopied)
+            recordHistoryEntry(
+                GenerationHistoryEntry(
+                    userId = ownerId,
+                    projectId = project.id.ifBlank { "local_movie" },
+                    projectTitle = project.title.ifBlank { fileName },
+                    actionType = "DOWNLOAD_MP4",
+                    creditsUsed = 0L,
+                    status = "COMPLETED",
+                    durationLabel = "${project.durationSeconds}s",
+                    language = CartoonLanguage.fromKey(project.language).label,
+                    style = CartoonStyle.fromKey(project.style).label,
+                    details = "Saved $fileName ($sizeText) to $displayLocation"
+                )
+            )
+        }
+    }
+
+    // Dual-mode storage helpers
+    private suspend fun createProjectRecord(project: CartoonProject): Result<String> =
+        if (repository != null && !currentUserId.isNullOrBlank()) {
+            repository.createProject(project)
+        } else {
+            localStore.createProject(project)
+        }
+
+    private suspend fun updateProject(
+        projectId: String,
+        title: String? = null,
+        prompt: String? = null,
+        status: String,
+        progressPercent: Int,
+        sceneCount: Int? = null,
+        completedScenes: Int,
+        durationSeconds: Int? = null,
+        scriptSummary: String? = null,
+        localVideoPath: String? = null,
+        thumbnailBase64: String? = null,
+        errorMessage: String? = null
+    ): Result<Unit> =
+        if (repository != null && !currentUserId.isNullOrBlank()) {
+            repository.updateProjectProgress(
+                projectId = projectId,
+                title = title,
+                prompt = prompt,
+                status = status,
+                progressPercent = progressPercent,
+                sceneCount = sceneCount,
+                completedScenes = completedScenes,
+                durationSeconds = durationSeconds,
+                scriptSummary = scriptSummary,
+                localVideoPath = localVideoPath,
+                thumbnailBase64 = thumbnailBase64,
+                errorMessage = errorMessage
+            )
+        } else {
+            localStore.updateProjectProgress(
+                projectId = projectId,
+                title = title,
+                prompt = prompt,
+                status = status,
+                progressPercent = progressPercent,
+                sceneCount = sceneCount,
+                completedScenes = completedScenes,
+                durationSeconds = durationSeconds,
+                scriptSummary = scriptSummary,
+                localVideoPath = localVideoPath,
+                thumbnailBase64 = thumbnailBase64,
+                errorMessage = errorMessage
+            )
+        }
+
+    private suspend fun saveScenes(projectId: String, scenes: List<SceneRecord>): Result<List<String>> =
+        if (repository != null && !currentUserId.isNullOrBlank()) {
+            repository.saveScenesBatch(projectId, scenes)
+        } else {
+            localStore.saveScenesBatch(projectId, scenes)
+        }
+
+    private suspend fun updateScene(
+        projectId: String,
+        sceneId: String,
+        status: String,
+        retryCount: Long,
+        localImagePath: String? = null,
+        errorMessage: String? = null
+    ): Result<Unit> =
+        if (repository != null && !currentUserId.isNullOrBlank()) {
+            repository.updateSceneStatus(
+                projectId = projectId,
+                sceneId = sceneId,
+                status = status,
+                retryCount = retryCount,
+                localImagePath = localImagePath,
+                errorMessage = errorMessage
+            )
+        } else {
+            localStore.updateSceneStatus(
+                projectId = projectId,
+                sceneId = sceneId,
+                status = status,
+                retryCount = retryCount,
+                localImagePath = localImagePath,
+                errorMessage = errorMessage
+            )
+        }
+
+    private suspend fun recordStats(videosIncrement: Long, scenesIncrement: Long) {
+        if (repository != null && !currentUserId.isNullOrBlank()) {
+            repository.deductCreditsAndRecordStats(0L, videosIncrement, scenesIncrement)
+        } else {
+            localStore.recordStats(videosIncrement, scenesIncrement)
+        }
+    }
+
+    private suspend fun recordHistoryEntry(entry: GenerationHistoryEntry) {
+        if (repository != null && !currentUserId.isNullOrBlank()) {
+            repository.addHistoryEntry(entry)
+        } else {
+            localStore.addHistoryEntry(entry)
+        }
+    }
+
+    private suspend fun updatePreferences(style: CartoonStyle, language: CartoonLanguage) {
+        if (repository != null && !currentUserId.isNullOrBlank()) {
+            repository.updateUserPreferences(style, language)
+        } else {
+            localStore.updatePreferences(style, language)
         }
     }
 
@@ -1007,16 +1258,18 @@ class CartoonStudioViewModel(
 
     companion object {
         fun provideFactory(
-            repository: CartoonRepository,
+            repository: CartoonRepository?,
+            localStore: LocalStudioStore,
             aiService: CartoonAiService,
             audioEngine: VoiceAndAudioEngine,
             videoRenderer: CartoonVideoRenderer,
             filesDir: File,
-            currentUserId: String
+            currentUserId: String?
         ): ViewModelProvider.Factory = viewModelFactory {
             initializer {
                 CartoonStudioViewModel(
                     repository = repository,
+                    localStore = localStore,
                     aiService = aiService,
                     audioEngine = audioEngine,
                     videoRenderer = videoRenderer,

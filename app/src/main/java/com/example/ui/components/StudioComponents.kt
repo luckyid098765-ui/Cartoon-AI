@@ -23,8 +23,9 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AllInclusive
 import androidx.compose.material.icons.filled.AutoAwesome
-import androidx.compose.material.icons.filled.Bolt
+import androidx.compose.material.icons.filled.CloudDone
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -58,7 +59,7 @@ import com.example.ui.theme.StudioSurface
 import com.example.ui.theme.StudioSurfaceCard
 import com.example.ui.theme.StudioSurfaceElevated
 import com.example.ui.theme.StudioVoid
-import com.example.ui.theme.WarningAmber
+import com.example.ui.theme.SuccessMint
 import java.io.File
 
 @Composable
@@ -128,8 +129,8 @@ fun GlassStudioCard(
 
 @Composable
 fun CartoonAiTopBar(
-    creditsRemaining: Long,
-    onCreditsClick: () -> Unit,
+    isSignedIn: Boolean,
+    onStatusClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     Row(
@@ -173,12 +174,12 @@ fun CartoonAiTopBar(
             modifier = Modifier
                 .minimumInteractiveComponentSize()
                 .clip(RoundedCornerShape(50))
-                .clickable(onClick = onCreditsClick)
-                .testTag("credits_badge"),
+                .clickable(onClick = onStatusClick)
+                .testTag("unlimited_status_badge"),
             color = StudioSurfaceCard,
             border = BorderStroke(
                 1.dp,
-                Brush.linearGradient(listOf(WarningAmber.copy(alpha = 0.7f), ElectricViolet))
+                Brush.linearGradient(listOf(SuccessMint.copy(alpha = 0.75f), CyanSpark))
             ),
             shape = RoundedCornerShape(50)
         ) {
@@ -187,15 +188,16 @@ fun CartoonAiTopBar(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Icon(
-                    imageVector = Icons.Filled.Bolt,
-                    contentDescription = "Generation credits",
-                    tint = WarningAmber,
+                    imageVector = if (isSignedIn) Icons.Filled.CloudDone else Icons.Filled.AllInclusive,
+                    contentDescription = "Unlimited access",
+                    tint = SuccessMint,
                     modifier = Modifier.size(16.dp)
                 )
-                Spacer(modifier = Modifier.width(4.dp))
+                Spacer(modifier = Modifier.width(6.dp))
                 Text(
-                    text = "$creditsRemaining credits",
+                    text = if (isSignedIn) "Unlimited Sync" else "Unlimited",
                     style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.onBackground,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis

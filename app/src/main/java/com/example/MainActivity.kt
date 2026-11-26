@@ -13,7 +13,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Face
@@ -38,8 +37,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -58,6 +59,7 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.example.ai.CartoonAiService
 import com.example.data.repository.CartoonRepository
+import com.example.data.repository.LocalStudioStore
 import com.example.data.repository.attemptAutoSignIn
 import com.example.data.repository.authStateFlow
 import com.example.data.repository.signOutUser
@@ -77,7 +79,6 @@ import com.example.ui.theme.CyanSpark
 import com.example.ui.theme.ElectricViolet
 import com.example.ui.theme.StudioDeepBg
 import com.example.ui.theme.StudioSurface
-import com.example.ui.theme.StudioSurfaceElevated
 import com.example.ui.theme.StudioTextSecondary
 import com.example.ui.viewmodel.CartoonStudioViewModel
 import com.example.ui.viewmodel.DataUiState
@@ -130,6 +131,7 @@ fun CartoonAiRoot() {
     val credentialManager = remember(context) { CredentialManager.create(context) }
     val auth = remember { Firebase.auth }
     val currentUser by auth.authStateFlow().collectAsStateWithLifecycle(initialValue = auth.currentUser)
+    var showOptionalSignIn by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         if (auth.currentUser == null) {
@@ -143,13 +145,16 @@ fun CartoonAiRoot() {
         }
     }
 
-    val user = currentUser
-    if (user == null) {
-        AuthScreen(onAuthSuccess = {})
+    if (showOptionalSignIn && currentUser == null) {
+        AuthScreen(
+            onAuthSuccess = { showOptionalSignIn = false },
+            onContinueWithoutLogin = { showOptionalSignIn = false }
+        )
     } else {
-        key(user.uid) {
-            CartoonAiAuthenticatedApp(
-                currentUser = user,
+        key(currentUser?.uid ?: "guest") {
+            CartoonAiStudioApp(
+                currentUser = currentUser,
+                onSignInClick = { showOptionalSignIn = true },
                 onSignOut = {
                     signOutUser(credentialManager, scope)
                 }
@@ -159,33 +164,42 @@ fun CartoonAiRoot() {
 }
 
 @Composable
-fun CartoonAiAuthenticatedApp(
-    currentUser: FirebaseUser,
+fun CartoonAiStudioApp(
+    currentUser: FirebaseUser?,
+    onSignInClick: () -> Unit,
     onSignOut: () -> Unit
 ) {
     val context = LocalContext.current
     val appContext = context.applicationContext
     val databaseId = remember(appContext) { appContext.getString(R.string.firestore_database_id) }
-    val repository = remember(databaseId) {
-        CartoonRepository(FirebaseFirestore.getInstance(databaseId))
+    val repository = remember(databaseId, currentUser?.uid) {
+        if (currentUser != null) {
+            CartoonRepository(FirebaseFirestore.getInstance(databaseId))
+        } else {
+            null
+        }
     }
+    val localStore = remember(appContext) { LocalStudioStore(appContext.filesDir) }
     val aiService = remember { CartoonAiService() }
     val audioEngine = remember(appContext) { VoiceAndAudioEngine(appContext) }
     val videoRenderer = remember(appContext) { CartoonVideoRenderer(appContext) }
 
-    LaunchedEffect(currentUser.uid) {
-        repository.ensureUserProfile(currentUser)
+    LaunchedEffect(currentUser?.uid) {
+        if (currentUser != null && repository != null) {
+            repository.ensureUserProfile(currentUser)
+        }
     }
 
     val viewModel: CartoonStudioViewModel = viewModel(
-        key = currentUser.uid,
+        key = currentUser?.uid ?: "guest",
         factory = CartoonStudioViewModel.provideFactory(
             repository = repository,
+            localStore = localStore,
             aiService = aiService,
             audioEngine = audioEngine,
             videoRenderer = videoRenderer,
             filesDir = appContext.filesDir,
-            currentUserId = currentUser.uid
+            currentUserId = currentUser?.uid
         )
     )
 
@@ -311,8 +325,8 @@ fun CartoonAiAuthenticatedApp(
                     Column(modifier = Modifier.weight(1f).fillMaxHeight()) {
                         if (currentRoute != ROUTE_PLAYER) {
                             CartoonAiTopBar(
-                                creditsRemaining = userProfile?.creditsRemaining ?: 50L,
-                                onCreditsClick = { navigateTopLevel(ROUTE_PROJECTS) }
+                                isSignedIn = currentUser != null,
+                                onStatusClick = { navigateTopLevel(ROUTE_PROJECTS) }
                             )
                         }
 
@@ -322,10 +336,31 @@ fun CartoonAiAuthenticatedApp(
                             modifier = Modifier.weight(1f)
                         ) {
                             composable(ROUTE_HOME) {
+                                val homeProject = projects.firstOrNull { it.id == pipelineState.activeProjectId }
                                 HomeDashboardScreen(
                                     userProfile = userProfile,
                                     projects = projects,
                                     characters = characters,
+                                    formState = formState,
+                                    pipelineState = pipelineState,
+                                    completedProject = homeProject,
+                                    onPromptChange = viewModel::updatePrompt,
+                                    onClearPrompt = viewModel::clearPrompt,
+                                    onGenerateCartoon = { viewModel.generateCartoonMovie() },
+                                    onRetryGeneration = { viewModel.retryFailedGeneration() },
+                                    onCancelGeneration = viewModel::cancelGeneration,
+                                    onRegenerateProject = { proj -> viewModel.regenerateCartoon(proj) },
+                                    onVideoDownloaded = { proj, res ->
+                                        viewModel.recordVideoDownload(
+                                            project = proj,
+                                            fileName = res.fileName,
+                                            displayLocation = res.displayLocation,
+                                            bytesCopied = res.bytesCopied
+                                        )
+                                    },
+                                    onShowMessage = { msg ->
+                                        scope.launch { snackbarHostState.showSnackbar(msg) }
+                                    },
                                     onCreateNewCartoon = { navigateTopLevel(ROUTE_STUDIO) },
                                     onLaunchPreset = { preset ->
                                         viewModel.selectStyle(preset.style)
@@ -341,14 +376,18 @@ fun CartoonAiAuthenticatedApp(
                             }
 
                             composable(ROUTE_STUDIO) {
+                                val studioProject = projects.firstOrNull { it.id == pipelineState.activeProjectId }
                                 GeneratorStudioScreen(
                                     formState = formState,
                                     pipelineState = pipelineState,
+                                    completedProject = studioProject,
+                                    totalProjectsCount = projects.size,
                                     savedCharacters = characters,
                                     onPromptChange = viewModel::updatePrompt,
                                     onClearPrompt = viewModel::clearPrompt,
                                     onRandomStory = viewModel::pickRandomStory,
                                     onGenerateStory = viewModel::generateAiStoryIdea,
+                                    onApplyCategoryTheme = viewModel::applyQuickTheme,
                                     onSelectStyle = viewModel::selectStyle,
                                     onSelectDuration = viewModel::selectDuration,
                                     onSelectLanguage = viewModel::selectLanguage,
@@ -356,12 +395,27 @@ fun CartoonAiAuthenticatedApp(
                                     onSelectResolution = viewModel::selectResolution,
                                     onToggleCharacter = viewModel::toggleCharacterSelection,
                                     onGenerateCartoon = {
-                                        viewModel.generateCartoonMovie { projectId ->
-                                            openPlayer(projectId)
-                                        }
+                                        viewModel.generateCartoonMovie()
+                                    },
+                                    onRetryGeneration = {
+                                        viewModel.retryFailedGeneration()
+                                    },
+                                    onRegenerateProject = { proj ->
+                                        viewModel.regenerateCartoon(proj)
                                     },
                                     onCancelGeneration = viewModel::cancelGeneration,
-                                    onOpenVideoPlayer = { pid -> openPlayer(pid) }
+                                    onOpenVideoPlayer = { pid -> openPlayer(pid) },
+                                    onVideoDownloaded = { proj, res ->
+                                        viewModel.recordVideoDownload(
+                                            project = proj,
+                                            fileName = res.fileName,
+                                            displayLocation = res.displayLocation,
+                                            bytesCopied = res.bytesCopied
+                                        )
+                                    },
+                                    onShowMessage = { msg ->
+                                        scope.launch { snackbarHostState.showSnackbar(msg) }
+                                    }
                                 )
                             }
 
@@ -376,13 +430,16 @@ fun CartoonAiAuthenticatedApp(
 
                             composable(ROUTE_PROJECTS) {
                                 ProjectsAndAccountScreen(
+                                    isSignedIn = currentUser != null,
                                     userProfile = userProfile,
                                     projects = projects,
                                     characters = characters,
                                     history = history,
                                     onOpenProject = { proj -> openPlayer(proj.id) },
                                     onDeleteProject = viewModel::deleteProject,
-                                    onRefillCredits = viewModel::refillStarterCredits,
+                                    onDeleteHistoryEntry = viewModel::deleteHistoryEntry,
+                                    onClearHistory = viewModel::clearAllHistory,
+                                    onSignInClick = onSignInClick,
                                     onSignOut = onSignOut
                                 )
                             }
@@ -417,6 +474,14 @@ fun CartoonAiAuthenticatedApp(
                                         viewModel.editStoryAndRegenerate(proj, title, prompt) { newPid ->
                                             openPlayer(newPid)
                                         }
+                                    },
+                                    onVideoDownloaded = { proj, res ->
+                                        viewModel.recordVideoDownload(
+                                            project = proj,
+                                            fileName = res.fileName,
+                                            displayLocation = res.displayLocation,
+                                            bytesCopied = res.bytesCopied
+                                        )
                                     },
                                     onShowMessage = { msg ->
                                         scope.launch { snackbarHostState.showSnackbar(msg) }

@@ -30,10 +30,12 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Login
 import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.automirrored.filled.ViewList
-import androidx.compose.material.icons.filled.Bolt
+import androidx.compose.material.icons.filled.AllInclusive
 import androidx.compose.material.icons.filled.DeleteOutline
+import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Movie
@@ -103,19 +105,31 @@ import java.io.File
 
 @Composable
 fun ProjectsAndAccountScreen(
+    isSignedIn: Boolean,
     userProfile: UserProfile?,
     projects: List<CartoonProject>,
     characters: List<SavedCharacter>,
     history: List<GenerationHistoryEntry>,
     onOpenProject: (CartoonProject) -> Unit,
     onDeleteProject: (String) -> Unit,
-    onRefillCredits: () -> Unit,
+    onDeleteHistoryEntry: (String) -> Unit,
+    onClearHistory: () -> Unit,
+    onSignInClick: () -> Unit,
     onSignOut: () -> Unit
 ) {
     var selectedTab by remember { mutableIntStateOf(0) }
     var isGalleryView by remember { mutableStateOf(true) }
     var selectedStyleFilter by remember { mutableStateOf<String?>(null) }
+    var historyFilter by remember { mutableIntStateOf(0) } // 0 = All, 1 = Generations, 2 = Downloads
     var projectPendingDelete by remember { mutableStateOf<CartoonProject?>(null) }
+
+    val filteredHistory = remember(history, historyFilter) {
+        when (historyFilter) {
+            1 -> history.filter { it.actionType != "DOWNLOAD_MP4" }
+            2 -> history.filter { it.actionType == "DOWNLOAD_MP4" }
+            else -> history
+        }
+    }
 
     val availableStyleKeys = remember(projects) {
         projects.map { it.style }.distinct()
@@ -208,17 +222,19 @@ fun ProjectsAndAccountScreen(
                             )
                         }
 
-                        IconButton(
-                            onClick = onSignOut,
-                            modifier = Modifier
-                                .minimumInteractiveComponentSize()
-                                .testTag("sign_out_button")
-                        ) {
-                            Icon(
-                                imageVector = Icons.AutoMirrored.Filled.Logout,
-                                contentDescription = "Sign out",
-                                tint = ErrorCoral
-                            )
+                        if (isSignedIn) {
+                            IconButton(
+                                onClick = onSignOut,
+                                modifier = Modifier
+                                    .minimumInteractiveComponentSize()
+                                    .testTag("sign_out_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Filled.Logout,
+                                    contentDescription = "Sign out",
+                                    tint = ErrorCoral
+                                )
+                            }
                         }
                     }
 
@@ -229,28 +245,36 @@ fun ProjectsAndAccountScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.weight(1f)
+                        ) {
                             Icon(
-                                imageVector = Icons.Filled.Bolt,
-                                contentDescription = null,
-                                tint = WarningAmber,
+                                imageVector = Icons.Filled.AllInclusive,
+                                contentDescription = "Unlimited video generation",
+                                tint = SuccessMint,
                                 modifier = Modifier.size(20.dp)
                             )
                             Spacer(modifier = Modifier.width(6.dp))
                             Text(
-                                text = "${userProfile?.creditsRemaining ?: 50} Generation Credits Available",
+                                text = "Unlimited Cartoon Generation Active",
                                 style = MaterialTheme.typography.titleSmall,
-                                color = WarningAmber
+                                color = SuccessMint
                             )
                         }
 
-                        if ((userProfile?.creditsRemaining ?: 50L) < 10L) {
+                        if (!isSignedIn) {
                             OutlinedButton(
-                                onClick = onRefillCredits,
-                                border = BorderStroke(1.dp, WarningAmber),
-                                colors = ButtonDefaults.outlinedButtonColors(contentColor = WarningAmber)
+                                onClick = onSignInClick,
+                                border = BorderStroke(1.dp, CyanSpark),
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = CyanSpark),
+                                modifier = Modifier
+                                    .minimumInteractiveComponentSize()
+                                    .testTag("optional_sign_in_button")
                             ) {
-                                Text("Refill 50")
+                                Icon(Icons.AutoMirrored.Filled.Login, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Cloud Sync")
                             }
                         }
                     }
@@ -486,14 +510,79 @@ fun ProjectsAndAccountScreen(
                                 color = MaterialTheme.colorScheme.onBackground
                             )
                             Text(
-                                text = "Every cartoon generation and scene re-render appears here with credit usage.",
+                                text = "Every cartoon video generation appears here so you can track status and manage history.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                     }
                 } else {
-                    items(history, key = { it.id }) { entry ->
+                    item {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "Activity & Download History (${filteredHistory.size})",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onBackground
+                                )
+                                OutlinedButton(
+                                    onClick = onClearHistory,
+                                    border = BorderStroke(1.dp, ErrorCoral.copy(alpha = 0.7f)),
+                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = ErrorCoral),
+                                    modifier = Modifier
+                                        .minimumInteractiveComponentSize()
+                                        .testTag("clear_history_button")
+                                ) {
+                                    Icon(Icons.Filled.DeleteSweep, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(stringResource(R.string.btn_clear_history))
+                                }
+                            }
+
+                            val downloadCount = history.count { it.actionType == "DOWNLOAD_MP4" }
+                            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                item {
+                                    FilterChip(
+                                        selected = historyFilter == 0,
+                                        onClick = { historyFilter = 0 },
+                                        label = { Text("All (${history.size})") },
+                                        colors = FilterChipDefaults.filterChipColors(
+                                            selectedContainerColor = ElectricViolet.copy(alpha = 0.3f),
+                                            selectedLabelColor = Color.White
+                                        )
+                                    )
+                                }
+                                item {
+                                    FilterChip(
+                                        selected = historyFilter == 1,
+                                        onClick = { historyFilter = 1 },
+                                        label = { Text("Generations (${history.size - downloadCount})") },
+                                        colors = FilterChipDefaults.filterChipColors(
+                                            selectedContainerColor = ElectricViolet.copy(alpha = 0.3f),
+                                            selectedLabelColor = Color.White
+                                        )
+                                    )
+                                }
+                                item {
+                                    FilterChip(
+                                        selected = historyFilter == 2,
+                                        onClick = { historyFilter = 2 },
+                                        label = { Text("Downloads ($downloadCount)") },
+                                        colors = FilterChipDefaults.filterChipColors(
+                                            selectedContainerColor = SuccessMint.copy(alpha = 0.25f),
+                                            selectedLabelColor = Color.White
+                                        )
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    items(filteredHistory, key = { it.id }) { entry ->
                         GlassStudioCard(modifier = Modifier.fillMaxWidth()) {
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
@@ -525,10 +614,18 @@ fun ProjectsAndAccountScreen(
                                         style = MaterialTheme.typography.labelSmall,
                                         color = if (entry.status == "COMPLETED") SuccessMint else ErrorCoral
                                     )
-                                    Text(
-                                        text = "-${entry.creditsUsed} cr",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = WarningAmber
+                                }
+                                Spacer(modifier = Modifier.width(4.dp))
+                                IconButton(
+                                    onClick = { onDeleteHistoryEntry(entry.id) },
+                                    modifier = Modifier
+                                        .minimumInteractiveComponentSize()
+                                        .testTag("delete_history_${entry.id}")
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Filled.DeleteOutline,
+                                        contentDescription = "Delete history entry",
+                                        tint = ErrorCoral
                                     )
                                 }
                             }

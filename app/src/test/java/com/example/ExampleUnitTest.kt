@@ -1,13 +1,21 @@
 package com.example
 
 import com.example.data.model.CartoonLanguage
+import com.example.data.model.CartoonProject
 import com.example.data.model.CartoonStyle
 import com.example.data.model.DialogueLine
+import com.example.data.model.GenerationHistoryEntry
+import com.example.data.model.ProjectStatus
 import com.example.data.model.VideoAspectRatio
 import com.example.data.model.VideoDurationOption
+import com.example.data.model.VideoResolution
+import com.example.data.repository.LocalStudioStore
 import com.example.media.VideoExportHelper
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.nio.file.Files
 
 class ExampleUnitTest {
     @Test
@@ -15,9 +23,16 @@ class ExampleUnitTest {
         assertEquals(CartoonStyle.CARTOON_3D, CartoonStyle.fromKey("UNKNOWN_STYLE"))
         assertEquals(CartoonLanguage.HINDI, CartoonLanguage.fromKey("HINDI"))
         assertEquals(CartoonLanguage.BENGALI, CartoonLanguage.fromKey("BENGALI"))
+        assertEquals(VideoDurationOption.SEC_10, VideoDurationOption.fromKey("SEC_10"))
+        assertEquals(10, VideoDurationOption.SEC_10.targetSeconds)
+        assertEquals(VideoDurationOption.MIN_2, VideoDurationOption.fromKey("MIN_2"))
+        assertEquals(120, VideoDurationOption.MIN_2.targetSeconds)
         assertEquals(VideoDurationOption.MIN_5, VideoDurationOption.fromKey("MIN_5"))
         assertEquals(10, VideoDurationOption.MIN_5.sceneCount)
         assertEquals(VideoAspectRatio.RATIO_9_16, VideoAspectRatio.fromKey("RATIO_9_16"))
+        assertEquals(VideoResolution.RES_480P, VideoResolution.fromKey("RES_480P"))
+        assertEquals(848, VideoAspectRatio.RATIO_16_9.width480)
+        assertEquals(480, VideoAspectRatio.RATIO_16_9.height480)
 
         val dlg = DialogueLine(
             speaker = "Bolt",
@@ -40,5 +55,51 @@ class ExampleUnitTest {
         assertEquals("Cartoon_AI_Movie_105.mp4", VideoExportHelper.formatMovieFilename(105))
         assertEquals("512 B", VideoExportHelper.formatByteSize(512L))
         assertEquals("2.0 MB", VideoExportHelper.formatByteSize(2L * 1024L * 1024L))
+    }
+
+    @Test
+    fun local_studio_store_persists_projects_and_history_deletion() = runBlocking {
+        val tempDir = Files.createTempDirectory("cartoon_ai_store_test").toFile()
+        try {
+            val store = LocalStudioStore(tempDir)
+            val createdId = store.createProject(
+                CartoonProject(
+                    title = "Robo Fox Adventure",
+                    prompt = "A little robot fox explores a floating sky island.",
+                    style = CartoonStyle.CARTOON_3D.key,
+                    status = ProjectStatus.GENERATING.key
+                )
+            ).getOrThrow()
+
+            store.updateProjectProgress(
+                projectId = createdId,
+                status = ProjectStatus.COMPLETED.key,
+                progressPercent = 100,
+                completedScenes = 3
+            ).getOrThrow()
+
+            store.addHistoryEntry(
+                GenerationHistoryEntry(
+                    projectId = createdId,
+                    projectTitle = "Robo Fox Adventure",
+                    status = "COMPLETED"
+                )
+            ).getOrThrow()
+
+            // Reload from disk to confirm persistence
+            val reloaded = LocalStudioStore(tempDir)
+            assertEquals(1, reloaded.projects.value.size)
+            assertEquals("COMPLETED", reloaded.projects.value.first().status)
+            assertEquals(1, reloaded.history.value.size)
+
+            val histId = reloaded.history.value.first().id
+            reloaded.deleteHistoryEntry(histId).getOrThrow()
+            assertTrue(reloaded.history.value.isEmpty())
+
+            reloaded.deleteProject(createdId).getOrThrow()
+            assertTrue(reloaded.projects.value.isEmpty())
+        } finally {
+            tempDir.deleteRecursively()
+        }
     }
 }

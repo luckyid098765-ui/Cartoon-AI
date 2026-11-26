@@ -278,6 +278,7 @@ class CartoonVideoRenderer(private val context: Context) {
         resolution: VideoResolution
     ): Pair<Int, Int> {
         val desired = when (resolution) {
+            VideoResolution.RES_480P -> aspectRatio.width480 to aspectRatio.height480
             VideoResolution.RES_720P -> aspectRatio.width720 to aspectRatio.height720
             VideoResolution.RES_1080P -> aspectRatio.width1080 to aspectRatio.height1080
             VideoResolution.RES_4K -> when (aspectRatio) {

@@ -56,6 +56,8 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.activity.compose.BackHandler
+import androidx.compose.material3.OutlinedButton
 import androidx.credentials.CredentialManager
 import com.example.R
 import com.example.data.repository.onGoogleSignInClicked
@@ -69,8 +71,12 @@ import com.example.ui.theme.StudioSurfaceCard
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun AuthScreen(
-    onAuthSuccess: () -> Unit
+    onAuthSuccess: () -> Unit,
+    onContinueWithoutLogin: (() -> Unit)? = null
 ) {
+    if (onContinueWithoutLogin != null) {
+        BackHandler(onBack = onContinueWithoutLogin)
+    }
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val credentialManager = remember(context) { CredentialManager.create(context) }
@@ -230,6 +236,23 @@ fun AuthScreen(
                                     style = MaterialTheme.typography.titleSmall,
                                     fontWeight = FontWeight.Bold
                                 )
+                            }
+                        }
+
+                        if (onContinueWithoutLogin != null) {
+                            Spacer(modifier = Modifier.height(10.dp))
+                            OutlinedButton(
+                                onClick = onContinueWithoutLogin,
+                                border = BorderStroke(1.dp, CyanSpark.copy(alpha = 0.6f)),
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = CyanSpark),
+                                shape = RoundedCornerShape(16.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .minimumInteractiveComponentSize()
+                                    .height(48.dp)
+                                    .testTag("continue_without_login_button")
+                            ) {
+                                Text("Continue Without Login")
                             }
                         }
 
